@@ -107,9 +107,45 @@ Each specialist is **independently invokable** (`shepherd run guide`, `shepherd 
 
 ## Board constraint (v0)
 
-- **Supported: Tang Nano 9K only** (`GW1NR-LV9QN88PC6/I5`, `openFPGALoader -b tangnano9k`)
-- If the user names another board, GuideAgent explains v0 supports Tang Nano 9K only and continues only if they agree to target that board
-- Pin/constraint templates and DesignAgent knowledge are Tang Nano 9K–specific
+- **Supported boards are declared in one registry file** (see below). v0 lists **Tang Nano 9K only**.
+- GuideAgent / Shepherd load that file as the allowlist — do not hardcode board names in agent prompts alone
+- If the user names another board, GuideAgent explains it is unsupported and continues only if they agree to target a listed board
+- Per-board pin helpers and `knowledge/*.md` stay optional extras; the registry is the source of truth for “do we support this?”
+
+### Boards registry format
+
+Prefer **YAML** (`boards.yaml`): easy for teammates to read/edit, comments allowed, maps cleanly to structured Python.
+
+Canonical path: [`boards.yaml`](boards.yaml) at the **repo root** (also importable from package data if we package later).
+
+```yaml
+# boards.yaml — supported FPGA boards (source of truth for allowlist)
+version: 1
+default_board: tangnano9k
+boards:
+  tangnano9k:
+    name: Tang Nano 9K
+    aliases:
+      - tang nano 9k
+      - tangnano 9k
+      - sipeed tang nano 9k
+    supported: true
+    vendor: Sipeed
+    fpga:
+      family: GW1N-9C
+      device: GW1NR-LV9QN88PC6/I5
+    openfpgaloader:
+      board: tangnano9k
+    constraints:
+      extension: .cst
+    notes: v0 only supported board
+```
+
+Rules:
+
+- `boards.<id>.supported: true` is required for Shepherd to accept that board
+- `default_board` must reference an existing supported id
+- Adding a board later = new YAML entry + optional `knowledge/<id>.md` + tools — GuideAgent picks it up from the registry
 
 ## Default technical decisions
 
@@ -117,6 +153,7 @@ Each specialist is **independently invokable** (`shepherd run guide`, `shepherd 
 - **LLM**: Meta Llama via OpenAI-compatible HTTP client. Abstract behind `llm/client.py`
 - **Agent loop**: Lightweight ReAct-style loop (model ↔ tools ↔ observation), one loop per agent — no heavy framework lock-in
 - **Interaction**: `shepherd chat` is the default happy path (readline / prompt_toolkit style Q&A)
+- **Boards**: YAML registry at repo root (`boards.yaml`); Tang Nano 9K only in v0
 - **OS**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
 
@@ -145,12 +182,14 @@ Shared across agents:
 ```text
 PLAN.md
 README.md
+boards.yaml               # supported boards registry (Tang Nano 9K only in v0)
 pyproject.toml
 .env.example
 src/shepherd/
   __init__.py
   cli.py
   llm/client.py
+  boards.py               # load/validate boards.yaml; allowlist helpers
   agents/
     base.py
     shepherd.py           # orchestrator + chat host
@@ -197,7 +236,7 @@ docs/extending.md
 
 - Stable **Tool** protocol: name, JSON schema, `run(**kwargs) -> ToolResult`
 - Stable **Agent** protocol: `name`, `system_prompt`, `tools`, `run(goal, context) -> AgentResult`
-- Later boards = new `knowledge/` + `board_*.py` + GuideAgent allowlist update
+- Later boards = new entry in `boards.yaml` + optional `knowledge/` + `board_*.py`
 - Example stub in docs (e.g. `SimAgent` / UART listen)
 
 ## Out of scope for v0
@@ -213,8 +252,8 @@ docs/extending.md
 
 1. Write / update **`PLAN.md`** (this document)
 2. Scaffold Python package + CLI + Meta LLM client + `.env.example`
-3. Implement tools (shell, OSS CAD, project FS, build, program, Tang Nano 9K board helpers)
-4. Implement specialists: Guide, Design, Env, Toolchain, Project, BuildProgram, **Verify** + Shepherd chat host (auto-check hooks)
+3. Add `boards.yaml` (Tang Nano 9K only) + `boards.py` loader; implement tools (shell, OSS CAD, project FS, build, program, board helpers, verify logs)
+4. Implement specialists: Guide, Design, Env, Toolchain, Project, BuildProgram, **Verify** + Shepherd chat host (auto-check hooks; board allowlist from YAML)
 5. Example project + `README.md` quickstart (include IMU-style guided example in docs)
 6. Smoke-test: `chat` / `doctor` → `validate`+check → `build`+check; `program`+check when board connected
 
