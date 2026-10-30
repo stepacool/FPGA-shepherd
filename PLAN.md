@@ -81,6 +81,7 @@ flowchart LR
   Shepherd --> Toolchain[ToolchainAgent]
   Shepherd --> Project[ProjectAgent]
   Shepherd --> Build[BuildProgramAgent]
+  Shepherd --> Verify[VerifyAgent]
   Guide --> Chat[clarify_questions]
   Design --> Files[write_verilog_cst]
   Env --> ShellTools[shell_fs_checks]
@@ -88,17 +89,19 @@ flowchart LR
   Project --> VerilogCst[verilog_cst_validate]
   Build --> YosysNextpnr[yosys_nextpnr_gowin_pack]
   Build --> Loader[openFPGALoader]
+  Verify --> Logs[logs_artifacts_usb]
 ```
 
 | Agent | Role | Responsibility | Acts via |
 | --- | --- | --- | --- |
-| **Shepherd** | Orchestrator + session host | Ask how we can help; route to specialists; keep structured session context; final human-readable report | Agent dispatch + interactive prompts |
+| **Shepherd** | Orchestrator + session host | Ask how we can help; route to specialists; **always invoke VerifyAgent after validate/build/program**; keep structured session context; final report | Agent dispatch + interactive prompts |
 | **GuideAgent** | Intent → plan | Parse NL goal; ask clarifying questions; produce a confirmed build plan (interfaces, pins, artifacts, success criteria). **Tang Nano 9K only** — refuse/redirect other boards | Chat + structured plan object |
 | **DesignAgent** | Scaffold project | From confirmed plan, create/update project dir: `top.v` (+ modules), `.cst`, README snippet for the design | File write tools; board pin knowledge for Tang Nano 9K |
 | **EnvAgent** | Step 1 (adapted) | Check Cursor/VS Code + optional Lushay Code; report readiness. Does not block CLI flow if extension missing | `cursor`/`code` extension list/install when available |
 | **ToolchainAgent** | Step 2 | Detect/install/verify OSS CAD Suite; ensure `yosys`, `nextpnr-*`, `gowin_pack`, `openFPGALoader` | Download/extract, config path, smoke-test binaries |
 | **ProjectAgent** | Step 3 | Validate project: ≥1 `.v`, ≥1 `.cst`, top module (`top` default), pin sanity | Filesystem + heuristics + fix suggestions |
-| **BuildProgramAgent** | Step 4 | Synthesize → P&R → pack → program; diagnose logs; safe retries | `yosys`, nextpnr, `gowin_pack`, `openFPGALoader -b tangnano9k` |
+| **BuildProgramAgent** | Step 4 | Synthesize → P&R → pack → program; capture full logs for VerifyAgent | `yosys`, nextpnr, `gowin_pack`, `openFPGALoader -b tangnano9k` |
+| **VerifyAgent** | Auto-check | After validate/build/program: read exit codes, logs, artifacts (and optional USB detect); emit `pass`/`warn`/`fail` + plain-language fixes | Log/artifact tools + Meta Llama judgment |
 
 Each specialist is **independently invokable** (`shepherd run guide`, `shepherd run design`, …) and also used inside `shepherd chat` / `shepherd run`.
 
@@ -130,6 +133,9 @@ Shared across agents:
   board: "tangnano9k",
   oss_cad_path,
   artifacts,            # .v / .cst / .fs paths
+  last_step,            # validate | build | program
+  last_logs,            # captured stdout/stderr from last tool run
+  last_verdict,         # VerifyAgent: pass | warn | fail + notes
   errors
 }
 ```
@@ -154,6 +160,7 @@ src/shepherd/
     toolchain.py
     project.py
     build_program.py
+    verify.py             # auto-check after validate/build/program
   tools/
     shell.py
     oss_cad.py
@@ -161,6 +168,7 @@ src/shepherd/
     fpga_build.py
     fpga_program.py
     board_tangnano9k.py   # pin / constraint helpers
+    verify_logs.py        # parse/summarize toolchain + loader logs
   knowledge/
     tangnano9k.md         # board facts for Guide/Design prompts
   config.py
@@ -170,12 +178,13 @@ docs/extending.md
 
 ## Core CLI flows
 
-1. `shepherd chat` — **primary**: “How can we help you today?” → guide → (optional) scaffold → validate → build → program  
+1. `shepherd chat` — **primary**: “How can we help you today?” → guide → scaffold → validate → **check** → build → **check** → program → **check**  
 2. `shepherd doctor` — Env + Toolchain checklist  
-3. `shepherd validate --project PATH`  
-4. `shepherd build --project PATH`  
-5. `shepherd program --project PATH` — build + load (SRAM default; `--flash` optional)  
-6. `shepherd run --goal "..."` — non-interactive pipeline when goal + enough flags are provided  
+3. `shepherd validate --project PATH` — then auto VerifyAgent (skip with `--no-check`)  
+4. `shepherd build --project PATH` — then auto VerifyAgent  
+5. `shepherd program --project PATH` — build + load (SRAM default; `--flash` optional) → auto VerifyAgent  
+6. `shepherd check --stage … --project PATH` — VerifyAgent only  
+7. `shepherd run --goal "..."` — non-interactive pipeline when goal + enough flags are provided  
 
 ## Build/program command skeleton
 
@@ -205,16 +214,17 @@ docs/extending.md
 1. Write / update **`PLAN.md`** (this document)
 2. Scaffold Python package + CLI + Meta LLM client + `.env.example`
 3. Implement tools (shell, OSS CAD, project FS, build, program, Tang Nano 9K board helpers)
-4. Implement specialists: Guide, Design, Env, Toolchain, Project, BuildProgram + Shepherd chat host
+4. Implement specialists: Guide, Design, Env, Toolchain, Project, BuildProgram, **Verify** + Shepherd chat host (auto-check hooks)
 5. Example project + `README.md` quickstart (include IMU-style guided example in docs)
-6. Smoke-test: `chat` / `doctor` → `validate` → `build`; `program` when board connected
+6. Smoke-test: `chat` / `doctor` → `validate`+check → `build`+check; `program`+check when board connected
 
 ## Success criteria
 
 - User can start `shepherd chat`, state a Tang Nano 9K goal in plain language, answer a few questions, and get a scaffolded + buildable project
+- After validate/build/program, user always gets an AI verdict (`pass`/`warn`/`fail`) with concrete next steps — not just raw toolchain spam
 - Teammate can clone, set Meta API key, run `shepherd doctor` and understand what’s missing
 - Each agent runnable alone; full pipeline programs Tang Nano 9K when hardware + suite present
-- Clear extension path for a fifth/sixth agent without rewriting the core loop
+- Clear extension path for adding agents without rewriting the core loop
 - Meta model usage is explicit and central
 
 ## Human toolchain reference (agents use CLI equivalents)
