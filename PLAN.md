@@ -6,7 +6,7 @@ Ship a **hackathon-ready devkit** for people who already write RTL: they bring t
 
 Shepherd is a **thin, transparent layer on top of [apio](https://fpgawars.github.io/apio/docs)**. apio already installs and pins the open toolchain, knows boards, and runs build / upload / lint / sim. Shepherd adds what apio does not do:
 
-1. **Right front end for your HDL** — Verilog/SystemVerilog go straight to apio; Amaranth (and later VHDL, SpinalHDL, Chisel) are elaborated to Verilog first, then handed to apio
+1. **Right HDL adapter for your design** — Verilog/SystemVerilog go straight to apio; Amaranth (and later VHDL, SpinalHDL, Chisel) are elaborated to Verilog first, then handed to apio
 2. **Failure diagnosis** — turn Yosys / nextpnr / openFPGALoader (via apio) output into a cause + concrete fix (Meta Llama, after deterministic matchers)
 3. **Environment fixing** — drivers, udev, USB detection, apio packages; propose the exact command, run it with the user’s OK
 4. **Project adoption** — point Shepherd at an existing repo; it detects HDL, top module and sources and writes `apio.ini`
@@ -16,14 +16,14 @@ Shepherd is a **thin, transparent layer on top of [apio](https://fpgawars.github
 
 ## Pitch
 
-> You write the RTL — in whatever HDL you use. Shepherd picks the right front end, builds and flashes through apio, and when something breaks it tells you why and how to fix it.
+> You write the RTL — in whatever HDL you use. Shepherd picks the right HDL adapter, builds and flashes through apio, and when something breaks it tells you why and how to fix it.
 
 ## Design principles
 
 - **apio does the toolchain and board work.** Shepherd never re-implements synthesis, P&R, packing, programming, or board/pin databases. Bugs or missing boards in apio go upstream, not into Shepherd
 - **Call the apio CLI, don’t import its internals.** apio is driven as a subprocess; its Python internals are not a stable API. Minimum apio version pinned and checked by `doctor`
 - **Transparent by default.** Every command Shepherd runs is printed; raw apio output is always shown (or one flag away). The AI verdict comes *after* the raw log, never instead of it
-- **Deterministic first, AI second.** Front-end choice, flags and known error signatures are plain code. Meta Llama explains, prioritizes and handles the long tail — it never silently picks flags
+- **Deterministic first, AI second.** HDL-adapter choice, flags and known error signatures are plain code. Meta Llama explains, prioritizes and handles the long tail — it never silently picks flags
 - **Never mutate the user’s project without consent.** AI-proposed edits (`.cst`, `apio.ini`, source) are shown as diffs and applied only on confirmation
 - **Works offline.** `--no-ai` runs everything except explanations; deterministic checks still fire
 - **Passthrough always available.** `shepherd apio -- <args>` runs raw apio in the project context
@@ -32,19 +32,19 @@ Shepherd is a **thin, transparent layer on top of [apio](https://fpgawars.github
 
 A small **Python CLI package** (`fpga-shepherd`, command `shepherd`):
 
-- Command surface mirrors apio (`build`, `upload`, `lint`, `sim`, `test`, `report`) so muscle memory transfers; Shepherd adds pre-steps (front end) and post-steps (verify + diagnose)
+- Command surface mirrors apio (`build`, `upload`, `lint`, `sim`, `test`, `report`) so muscle memory transfers; Shepherd adds pre-steps (HDL adapter) and post-steps (verify + diagnose)
 - Talks to **Meta Llama** (`META_API_KEY` + `META_BASE_URL` + model id via env), OpenAI-compatible client
 - Uses **`uv`** for its own env; **apio is a pinned dependency** of the package (`uv add apio`), so `uv run shepherd` always gets a known apio version
 - Machine-readable output (`--json`) for CI and editor integrations
-- Extensible: new front end / error signature / agent = new module + registration
+- Extensible: new HDL adapter / error signature / agent = new module + registration
 
 ## Primary flow
 
 ```mermaid
 flowchart TD
   Cmd[shepherd_build_or_upload] --> Detect[Detect_project_and_HDL]
-  Detect --> FE[Frontend_emit_Verilog_if_needed]
-  FE --> Apio[apio_build_or_upload]
+  Detect --> Adapter[HDL_adapter_emit_Verilog_if_needed]
+  Adapter --> Apio[apio_build_or_upload]
   Apio --> Match[Known_error_signatures]
   Match --> Verify[VerifyAgent_verdict]
   Verify --> Report[Verdict_and_fix]
@@ -72,7 +72,7 @@ After **every** `build`, `upload`, `lint`, `test` (and on demand via `shepherd c
 
 | After | Deterministic facts | AI adds |
 | --- | --- | --- |
-| **front end** | emitter exit code, Verilog produced, top module present | why elaboration failed, in source terms |
+| **HDL adapter** | emitter exit code, Verilog produced, top module present | why elaboration failed, in source terms |
 | **build** | apio exit code, bitstream exists & non-empty, utilization/timing from `apio report` | cause + fix for synth/P&R failures; retry with `--verbose-synth` / `--verbose-pnr` when output is too thin |
 | **upload** | openFPGALoader output (via apio), `apio devices` scan, SRAM vs flash | driver / udev / cable / board-mode fixes |
 | **lint / test** | Verilator / testbench exit codes | grouped, deduplicated findings |
@@ -99,13 +99,13 @@ Board identity comes **exclusively from apio** (`apio.ini` / `apio boards`). v0 
 
 `shepherd ask "..."` is an optional Q&A mode with the project and last run as context (e.g. “why is fmax 27 MHz?”). It is a helper, not the main entry point.
 
-## Front ends (“right compiler”)
+## HDL adapters
 
-**What “frontend” means here:** a small adapter that takes the user’s HDL and produces something **apio can build** (almost always Verilog). apio’s open flow speaks Verilog/SystemVerilog; other languages need a conversion step first. That converter is the frontend — not a UI.
+An **HDL adapter** converts the user’s design language into something **apio can build** (almost always Verilog). apio’s open flow speaks Verilog/SystemVerilog; other languages need a conversion step first. This is not a UI.
 
 | HDL | v0 path | Status |
 | --- | --- | --- |
-| Verilog (`.v`) | apio directly (passthrough frontend) | v0 |
+| Verilog (`.v`) | apio directly (passthrough adapter) | v0 |
 | SystemVerilog (`.sv`) | apio directly (apio/Yosys SV support) | v0 — verify which SV constructs the bundled Yosys accepts; surface clear errors |
 | Amaranth (`.py`) | Amaranth elaborate → Verilog into staging dir → apio | v0 |
 | VHDL | GHDL synth → Verilog (or ghdl-yosys-plugin) → apio | stretch — verify GHDL availability alongside apio packages |
@@ -156,10 +156,10 @@ Rules:
 ## Project config
 
 - **`apio.ini`** stays apio’s file (board, top-module, envs). Shepherd reads/writes it but does not add custom keys
-- **`shepherd.toml`** (optional) holds Shepherd-only settings: front end per source glob, staging on/off, AI on/off, extra context files
+- **`shepherd.toml`** (optional) holds Shepherd-only settings: HDL adapter per source glob, staging on/off, AI on/off, extra context files
 
 ```toml
-[frontend]
+[adapters]
 amaranth = { entry = "rtl/top.py:Top" }
 
 [checks]
@@ -176,7 +176,7 @@ Every run writes `.shepherd/runs/<timestamp>.json`:
   project_path,
   board,              # apio board id (e.g. sipeed-tang-nano-9k)
   hdl,                # detected languages
-  steps: [            # frontend | apio | verify
+  steps: [            # hdl_adapter | apio | verify
     { name, cmd, exit_code, log_path, duration }
   ],
   artifacts,          # emitted .v, .cst, bitstream
@@ -194,9 +194,9 @@ Every run writes `.shepherd/runs/<timestamp>.json`:
 | --- | --- |
 | `shepherd doctor [--fix]` | Env + apio + packages + drivers + devices checklist; `--fix` proposes/runs fixes with confirmation |
 | `shepherd init [PATH]` | Adopt existing repo (AdoptAgent) or create a minimal project; writes `apio.ini` (+ `shepherd.toml` if needed) |
-| `shepherd build` | Front end → `apio build` → verify |
-| `shepherd upload [--flash]` | Front end → `apio upload` → verify |
-| `shepherd lint` / `sim` / `test` / `report` | Front end → matching apio command → verify where useful |
+| `shepherd build` | HDL adapter → `apio build` → verify |
+| `shepherd upload [--flash]` | HDL adapter → `apio upload` → verify |
+| `shepherd lint` / `sim` / `test` / `report` | HDL adapter → matching apio command → verify where useful |
 | `shepherd check --stage …` | VerifyAgent on the last run |
 | `shepherd explain [LOG]` | Diagnose last failure or any log |
 | `shepherd ask "…"` | Optional Q&A with project + last run as context |
@@ -241,8 +241,8 @@ src/shepherd/
   apio/
     runner.py               # subprocess wrapper, version check, log capture
     parse.py                # apio / yosys / nextpnr / openFPGALoader output parsing
-  frontends/
-    base.py                 # Frontend protocol: detect(), emit() -> Verilog
+  adapters/                 # HDL adapters (not a UI)
+    base.py                 # protocol: detect(), emit() -> Verilog
     verilog.py              # passthrough (.v / .sv)
     amaranth.py
     vhdl.py                 # stretch
@@ -262,14 +262,14 @@ src/shepherd/
       openfpgaloader.yaml
 examples/
   blinky_sv/                # plain SV, apio.ini
-  uart_amaranth/            # Amaranth front end
+  uart_amaranth/            # Amaranth HDL adapter
   broken/                   # intentionally broken projects for demo + tests
-docs/extending.md           # new front end / signature / agent (boards via apio)
+docs/extending.md           # new HDL adapter / signature / agent (boards via apio)
 ```
 
 ## Extensibility
 
-- **Frontend** protocol: `detect(project) -> bool`, `emit(project, out_dir) -> list[Path]`
+- **HDL adapter** protocol: `detect(project) -> bool`, `emit(project, out_dir) -> list[Path]`
 - **Error signature**: YAML entry (tool, regex, cause, fix template) — no code
 - **Agent** protocol: `name`, `system_prompt`, `tools`, `run(context) -> AgentResult`
 - **Board**: apio board id only (`apio.ini` / `apio boards`)
@@ -300,7 +300,7 @@ docs/extending.md           # new front end / signature / agent (boards via apio
 3. `apio/runner.py` + `runs.py` + passthrough `shepherd apio --`; `build` / `upload` wrapping with log capture
 4. Error signature DB + VerifyAgent (deterministic, then LLM) + `shepherd explain`
 5. DoctorAgent + `doctor --fix`
-6. Frontends: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
+6. HDL adapters: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
 7. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
 8. Smoke test: `doctor` → `init` → `build` → `upload` on hardware; `--no-ai` and `--json` paths
 
@@ -311,4 +311,4 @@ docs/extending.md           # new front end / signature / agent (boards via apio
 - An Amaranth project builds and programs through apio without the user wiring up the conversion
 - `shepherd doctor` gets a fresh macOS/Linux machine from nothing to a programmed board with only confirmations
 - `--no-ai` works for everything except explanations
-- Adding a front end or error signature needs no core changes; boards come only from apio
+- Adding an HDL adapter or error signature needs no core changes; boards come only from apio
