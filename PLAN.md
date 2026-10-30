@@ -4,7 +4,7 @@
 
 Ship a **hackathon-ready, reusable tool** that helps people **build Tang Nano 9K projects quickly from natural language (NL)** — ordinary human wording, not code or CLI flags.
 
-The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read inertial measurement unit (IMU) sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold → validate → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
+The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read inertial measurement unit (IMU) sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold Amaranth → validate → (optional sim) → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
 
 Colleagues and later users can run it, fork it, and add new agents/tools. **v0 board support: Tang Nano 9K only.**
 
@@ -15,7 +15,9 @@ A small **Python CLI package** (`fpga-shepherd` / `shepherd`) that:
 - Starts an **interactive guided session** (prompt + clarifying questions), not only one-shot commands
 - Talks to **Meta Llama** (`META_API_KEY` + `META_BASE_URL` + model id via env)
 - Runs **independent specialist agents** with shared tool interfaces
-- Executes FPGA work through **OSS CAD Suite CLI** (not the Lushay VS Code UI)
+- Is **Amaranth-first**: DesignAgent scaffolds [Amaranth](https://amaranth-lang.org/docs/amaranth/latest/install.html) Python as the source of truth; Verilog is an **emitted artifact** for the open toolchain
+- Builds/programs Tang Nano 9K via CLI (Amaranth convert → OSS CAD Suite / YoWASP Gowin path → `openFPGALoader`) — not the Lushay VS Code UI
+- Uses **`uv`** as the standard way to create the environment and install libraries
 - Is easy to extend: new agent = new module + tool registrations + prompt
 
 Lushay Code remains an optional human UX note in docs; agents do not drive the extension UI.
@@ -30,10 +32,11 @@ flowchart TD
   Guide --> Confirm[User_confirms_plan]
   Confirm --> Env[EnvAgent]
   Confirm --> Toolchain[ToolchainAgent]
-  Confirm --> Design[DesignAgent_scaffold_RTL_CST]
+  Confirm --> Design[DesignAgent_scaffold_Amaranth]
   Design --> Project[ProjectAgent_validate]
   Project --> Verify1[VerifyAgent_after_validate]
-  Verify1 --> Build[BuildProgramAgent]
+  Verify1 --> Sim[optional_Amaranth_sim]
+  Sim --> Build[BuildProgramAgent]
   Build --> Verify2[VerifyAgent_after_build_or_program]
   Verify2 --> Done[Report_next_steps]
 ```
@@ -44,15 +47,16 @@ After **every** `validate`, `build`, and `program` step (chat pipeline *and* dir
 
 | After | What VerifyAgent checks | Verdict shape |
 | --- | --- | --- |
-| **validate** | Required files present, top module, `.cst` vs ports, obvious pin mistakes | `pass` / `fail` + fix list; block build on `fail` unless user overrides |
-| **build** | Tool exit codes, yosys/nextpnr/gowin_pack stderr, bitstream `.fs` exists & non-empty, timing/resource warnings worth mentioning | `pass` / `warn` / `fail` + whether to retry or edit register-transfer level (RTL) code |
-| **program** | openFPGALoader output, USB/device detect clues, success phrases vs cable errors | `pass` / `fail` + next human checks (LEDs, universal asynchronous receiver-transmitter (UART)) when hardware can’t be sensed |
+| **validate** | Amaranth entry module present, project layout, pin/platform mapping, emit/constraints sanity | `pass` / `fail` + fix list; block build on `fail` unless user overrides |
+| **build** | Tool exit codes, convert/synth/P&R logs, bitstream `.fs` exists & non-empty, timing/resource warnings | `pass` / `warn` / `fail` + whether to retry or edit Amaranth |
+| **program** | openFPGALoader output, USB/device detect clues, success vs cable errors | `pass` / `fail` + next human checks (LEDs, universal asynchronous receiver-transmitter (UART)) when hardware can’t be sensed |
 
 Rules:
 
 - Deterministic facts first (exit code, file exists); Meta Llama explains and prioritizes fixes
 - On `fail`, Shepherd stops the happy-path pipeline, shows the verdict, and may loop back to Design/Project/Build with the user’s OK
 - On `warn`, continue but surface warnings clearly
+- After validate, Shepherd may run a short **Amaranth simulation** when the plan includes testable behavior; VerifyAgent can include sim results
 - VerifyAgent is independently runnable: `shepherd check --stage validate|build|program --project …`
 
 Example:
@@ -64,8 +68,8 @@ Example:
    - Which pins / PMOD / header?
    - Output preference (LEDs, UART serial, both)?
    - New project path or existing folder?
-4. Shepherd proposes a short plan (files to create, pins, build/program).
-5. After user OK: scaffold Verilog + `.cst` → validate → **auto-check** → build → **auto-check** → program → **auto-check**.
+4. Shepherd proposes a short plan (Amaranth modules, pins, build/program).
+5. After user OK: scaffold Amaranth project → validate → **auto-check** → (optional sim) → emit Verilog → build → **auto-check** → program → **auto-check**.
 6. Report success / errors and what to try next (e.g. open serial monitor), using VerifyAgent’s last verdict.
 
 Direct commands (`doctor`, `validate`, `build`, `program`) remain available for power users; validate/build/program still trigger auto-check unless `--no-check` is passed.
@@ -83,25 +87,26 @@ flowchart LR
   Shepherd --> Build[BuildProgramAgent]
   Shepherd --> Verify[VerifyAgent]
   Guide --> Chat[clarify_questions]
-  Design --> Files[write_verilog_cst]
+  Design --> AmaranthFiles[write_amaranth_py]
   Env --> ShellTools[shell_fs_checks]
-  Toolchain --> OssCad[oss_cad_suite_install_verify]
-  Project --> VerilogCst[verilog_cst_validate]
+  Toolchain --> UvAndSuite[uv_sync_and_fpga_tools]
+  Project --> AmaranthLayout[amaranth_project_validate]
+  Build --> Convert[amaranth_to_verilog]
   Build --> YosysNextpnr[yosys_nextpnr_gowin_pack]
   Build --> Loader[openFPGALoader]
-  Verify --> Logs[logs_artifacts_usb]
+  Verify --> Logs[logs_artifacts_sim_usb]
 ```
 
 | Agent | Role | Responsibility | Acts via |
 | --- | --- | --- | --- |
 | **Shepherd** | Orchestrator + session host | Ask how we can help; route to specialists; **always invoke VerifyAgent after validate/build/program**; keep structured session context; final report | Agent dispatch + interactive prompts |
-| **GuideAgent** | Intent → plan | Parse NL goal; ask clarifying questions; produce a confirmed build plan (interfaces, pins, artifacts, success criteria). **Tang Nano 9K only** — refuse/redirect other boards | Chat + structured plan object |
-| **DesignAgent** | Scaffold project | From confirmed plan, create/update project dir: `top.v` (+ modules), constraints (`.cst`), README snippet for the design | File write tools; board pin knowledge for Tang Nano 9K |
+| **GuideAgent** | Intent → plan | Parse NL goal; ask clarifying questions; produce a confirmed build plan (interfaces, pins, Amaranth modules, success criteria). **Tang Nano 9K only** — refuse/redirect other boards | Chat + structured plan object |
+| **DesignAgent** | Scaffold project (**Amaranth-first**) | From confirmed plan, create/update project: Amaranth Python modules, Tang Nano 9K platform/pin wiring, optional sim stub, README snippet. Raw hand-written Verilog is not the default | File write tools; `lib/board_tangnano9k.py`; Amaranth APIs |
 | **EnvAgent** | Step 1 (adapted) | Check Cursor/VS Code + optional Lushay Code; report readiness. Does not block CLI flow if extension missing | `cursor`/`code` extension list/install when available |
-| **ToolchainAgent** | Step 2 | Detect/install/verify OSS CAD Suite; ensure `yosys`, `nextpnr-*`, `gowin_pack`, `openFPGALoader` | Download/extract, config path, smoke-test binaries |
-| **ProjectAgent** | Step 3 | Validate project: ≥1 `.v`, ≥1 `.cst`, top module (`top` default), pin sanity | Filesystem + heuristics + fix suggestions |
-| **BuildProgramAgent** | Step 4 | Synthesize → P&R → pack → program; capture full logs for VerifyAgent | `yosys`, nextpnr, `gowin_pack`, `openFPGALoader -b tangnano9k` |
-| **VerifyAgent** | Auto-check | After validate/build/program: read exit codes, logs, artifacts (and optional USB detect); emit `pass`/`warn`/`fail` + plain-language fixes | Log/artifact tools + Meta Llama judgment |
+| **ToolchainAgent** | Step 2 | Ensure **`uv`** project env + Amaranth deps; detect/verify FPGA CLI tools (`yosys`, nextpnr, `gowin_pack`, `openFPGALoader` via OSS CAD Suite and/or YoWASP) | `uv sync`, suite path config, smoke-test binaries |
+| **ProjectAgent** | Step 3 | Validate Amaranth project layout, entrypoint, board id from `boards.yaml`, pin mapping sanity | Filesystem + Amaranth import checks + fix suggestions |
+| **BuildProgramAgent** | Step 4 | Convert Amaranth → Verilog → synthesize → P&R → pack → program; capture full logs for VerifyAgent | Amaranth convert/build helpers; `openFPGALoader -b tangnano9k` |
+| **VerifyAgent** | Auto-check | After validate/build/program: read exit codes, logs, artifacts, optional sim, USB detect; emit `pass`/`warn`/`fail` + plain-language fixes | Log/artifact/sim tools + Meta Llama judgment |
 
 Each specialist is **independently invokable** (`shepherd run guide`, `shepherd run design`, …) and also used inside `shepherd chat` / `shepherd run`.
 
@@ -136,6 +141,9 @@ boards:
       device: GW1NR-LV9QN88PC6/I5
     openfpgaloader:
       board: tangnano9k
+    design:
+      hdl: amaranth          # source of truth
+      emit: verilog          # build artifact
     constraints:
       extension: .cst
     notes: v0 only supported board
@@ -145,17 +153,31 @@ Rules:
 
 - `boards.<id>.supported: true` is required for Shepherd to accept that board
 - `default_board` must reference an existing supported id
-- Adding a board later = new YAML entry + optional `knowledge/<id>.md` + tools — GuideAgent picks it up from the registry
+- Adding a board later = new YAML entry + optional `knowledge/<id>.md` + `lib/board_*.py` — GuideAgent picks it up from the registry
 
 ## Default technical decisions
 
 - **Language**: Python 3.11+
+- **Package / env manager**: **`uv`** only for installs and virtualenvs (`uv sync`, `uv add`, `uv run`). Document `uv` in README; do not treat plain `pip install` as the primary path
+- **HDL**: **Amaranth-first** (Python HDL). DesignAgent writes Amaranth; build emits Verilog for the open Gowin flow. Hand-edited `.v` is out of band / advanced, not the default scaffold
 - **LLM**: Meta Llama via OpenAI-compatible HTTP client. Abstract behind `llm/client.py`
 - **Agent loop**: Lightweight ReAct-style loop (model ↔ tools ↔ observation), one loop per agent — no heavy framework lock-in
 - **Interaction**: `shepherd chat` is the default happy path (readline / prompt_toolkit style Q&A)
 - **Boards**: YAML registry at repo root (`boards.yaml`); Tang Nano 9K only in v0
 - **OS**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
+
+### How teammates start (uv)
+
+```bash
+# install uv once: https://docs.astral.sh/uv/
+cd FPGA-shepherd
+uv sync
+cp .env.example .env   # set META_API_KEY yourself
+uv run shepherd chat
+```
+
+Add dependencies with `uv add <package>` (e.g. Amaranth). Lockfile (`uv.lock`) is committed.
 
 ## Session context (handoff object)
 
@@ -168,9 +190,10 @@ Shared across agents:
   plan,                 # confirmed steps + interfaces + pins
   project_path,
   board: "tangnano9k",
+  design_hdl: "amaranth",
   oss_cad_path,
-  artifacts,            # .v / .cst / .fs paths
-  last_step,            # validate | build | program
+  artifacts,            # .py (Amaranth) / emitted .v / .cst / .fs
+  last_step,            # validate | build | program | sim
   last_logs,            # captured stdout/stderr from last tool run
   last_verdict,         # VerifyAgent: pass | warn | fail + notes
   errors
@@ -183,7 +206,8 @@ Shared across agents:
 PLAN.md
 README.md
 boards.yaml               # supported boards registry (Tang Nano 9K only in v0)
-pyproject.toml
+pyproject.toml            # project metadata; managed with uv
+uv.lock                   # locked deps (committed)
 .env.example
 src/shepherd/
   __init__.py
@@ -194,44 +218,48 @@ src/shepherd/
     base.py
     shepherd.py           # orchestrator + chat host
     guide.py              # natural language (NL) goal + clarifying questions
-    design.py             # scaffold Verilog + constraints (.cst)
+    design.py             # scaffold Amaranth (not raw Verilog-first)
     env.py
-    toolchain.py
+    toolchain.py          # uv env + FPGA CLI tool checks
     project.py
-    build_program.py
+    build_program.py      # Amaranth → Verilog → bitstream → program
     verify.py             # auto-check after validate/build/program
   tools/
     shell.py
     oss_cad.py
     project_fs.py
+    amaranth_build.py     # convert / sim helpers
     fpga_build.py
     fpga_program.py
     verify_logs.py        # parse/summarize toolchain + loader logs
   lib/
-    board_tangnano9k.py   # pin / constraint helpers (not agent tools)
+    board_tangnano9k.py   # pin / platform helpers for Amaranth (not agent tools)
   knowledge/
     tangnano9k.md         # board facts for Guide/Design prompts
   config.py
-examples/button_led/      # minimal fixture + guided-flow demo target
+examples/button_led/      # minimal Amaranth fixture + guided-flow demo
 docs/extending.md
 ```
 
 ## Core CLI flows
 
-1. `shepherd chat` — **primary**: “How can we help you today?” → guide → scaffold → validate → **check** → build → **check** → program → **check**  
-2. `shepherd doctor` — Env + Toolchain checklist  
-3. `shepherd validate --project PATH` — then auto VerifyAgent (skip with `--no-check`)  
-4. `shepherd build --project PATH` — then auto VerifyAgent  
-5. `shepherd program --project PATH` — build + load (SRAM default; `--flash` optional) → auto VerifyAgent  
-6. `shepherd check --stage … --project PATH` — VerifyAgent only  
-7. `shepherd run --goal "..."` — non-interactive pipeline when goal + enough flags are provided  
+1. `uv run shepherd chat` — **primary**: “How can we help you today?” → guide → Amaranth scaffold → validate → **check** → build → **check** → program → **check**
+2. `uv run shepherd doctor` — Env + Toolchain checklist (`uv` + Amaranth + FPGA CLIs)
+3. `uv run shepherd validate --project PATH` — then auto VerifyAgent (skip with `--no-check`)
+4. `uv run shepherd build --project PATH` — then auto VerifyAgent
+5. `uv run shepherd program --project PATH` — build + load (SRAM default; `--flash` optional) → auto VerifyAgent
+6. `uv run shepherd check --stage … --project PATH` — VerifyAgent only
+7. `uv run shepherd run --goal "..."` — non-interactive pipeline when goal + enough flags are provided
 
 ## Build/program command skeleton
 
-1. `yosys -p "read_verilog …; synth_gowin -top top -json out.json"`
-2. `nextpnr-himbaechel` (or suite Gowin nextpnr) + device + `.cst`
-3. `gowin_pack -d GW1N-9C -o design.fs …`
-4. `openFPGALoader -b tangnano9k design.fs`
+Amaranth-first pipeline:
+
+1. Amaranth design sources in the project (`*.py`)
+2. Optional: Amaranth simulator smoke test
+3. Convert / elaborate to Verilog (Amaranth)
+4. `yosys` Gowin synth → nextpnr → `gowin_pack` (OSS CAD Suite and/or YoWASP)
+5. `openFPGALoader -b tangnano9k design.fs`
 
 ## Extensibility
 
@@ -239,10 +267,12 @@ docs/extending.md
 - Stable **Agent** protocol: `name`, `system_prompt`, `tools`, `run(goal, context) -> AgentResult`
 - Later boards = new entry in `boards.yaml` + optional `knowledge/` + `lib/board_*.py`
 - Example stub in docs (e.g. `SimAgent` / UART listen)
+- New Python deps: always `uv add`, never ad-hoc global pip as the documented path
 
 ## Out of scope for v0
 
 - Boards other than Tang Nano 9K
+- Verilog-first scaffolding as the default (emitted Verilog only)
 - Driving Lushay Code UI / Computer Use
 - Windows installer polish
 - Fully autonomous hardware bring-up with no user confirmation on pin choices
@@ -252,24 +282,24 @@ docs/extending.md
 ## Implementation order
 
 1. Write / update **`PLAN.md`** (this document)
-2. Scaffold Python package + CLI + Meta LLM client + `.env.example`
-3. Add `boards.yaml` (Tang Nano 9K only) + `boards.py` loader; implement tools (shell, OSS CAD, project FS, build, program, board helpers, verify logs)
-4. Implement specialists: Guide, Design, Env, Toolchain, Project, BuildProgram, **Verify** + Shepherd chat host (auto-check hooks; board allowlist from YAML)
-5. Example project + `README.md` quickstart (include IMU-style guided example in docs)
+2. Scaffold Python package with **`uv`** (`pyproject.toml`, `uv.lock`, CLI, Meta LLM client, `.env.example`); `uv add` Amaranth (+ builtin-yosys as needed)
+3. Add `boards.yaml` (Tang Nano 9K only, `design.hdl: amaranth`) + `boards.py` loader; implement tools (shell, OSS CAD, Amaranth convert/sim, project FS, build, program, board helpers, verify logs)
+4. Implement specialists: Guide, Design (**Amaranth-first**), Env, Toolchain (`uv` + FPGA tools), Project, BuildProgram, **Verify** + Shepherd chat host
+5. Example Amaranth project + `README.md` quickstart (`uv sync` / `uv run shepherd chat`; IMU-style guided example)
 6. Smoke-test: `chat` / `doctor` → `validate`+check → `build`+check; `program`+check when board connected
 
 ## Success criteria
 
-- User can start `shepherd chat`, state a Tang Nano 9K goal in plain language, answer a few questions, and get a scaffolded + buildable project
+- User can `uv sync` then `uv run shepherd chat`, state a Tang Nano 9K goal in plain language, answer a few questions, and get a scaffolded **Amaranth** project that builds
 - After validate/build/program, user always gets an AI verdict (`pass`/`warn`/`fail`) with concrete next steps — not just raw toolchain spam
-- Teammate can clone, set Meta API key, run `shepherd doctor` and understand what’s missing
-- Each agent runnable alone; full pipeline programs Tang Nano 9K when hardware + suite present
+- Teammate can clone, set Meta API key, run `uv run shepherd doctor` and understand what’s missing
+- Each agent runnable alone; full pipeline programs Tang Nano 9K when hardware + tools present
 - Clear extension path for adding agents without rewriting the core loop
-- Meta model usage is explicit and central
+- Meta model usage is explicit and central; **`uv`** is the documented install path
 
 ## Human toolchain reference (agents use CLI equivalents)
 
 1. Optional editor extension (Lushay Code) for humans
-2. OSS CAD Suite
-3. Project with Verilog + `.cst`
-4. Build and program (yosys → nextpnr → gowin_pack → openFPGALoader)
+2. `uv` project env + Amaranth ([install guide](https://amaranth-lang.org/docs/amaranth/latest/install.html))
+3. FPGA open toolchain (OSS CAD Suite and/or YoWASP) + `openFPGALoader`
+4. Project: Amaranth sources → emit Verilog → build → program Tang Nano 9K
