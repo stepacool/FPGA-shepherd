@@ -101,9 +101,11 @@ Board identity comes **exclusively from apio** (`apio.ini` / `apio boards`). v0 
 
 ## Front ends (“right compiler”)
 
+**What “frontend” means here:** a small adapter that takes the user’s HDL and produces something **apio can build** (almost always Verilog). apio’s open flow speaks Verilog/SystemVerilog; other languages need a conversion step first. That converter is the frontend — not a UI.
+
 | HDL | v0 path | Status |
 | --- | --- | --- |
-| Verilog (`.v`) | apio directly | v0 |
+| Verilog (`.v`) | apio directly (passthrough frontend) | v0 |
 | SystemVerilog (`.sv`) | apio directly (apio/Yosys SV support) | v0 — verify which SV constructs the bundled Yosys accepts; surface clear errors |
 | Amaranth (`.py`) | Amaranth elaborate → Verilog into staging dir → apio | v0 |
 | VHDL | GHDL synth → Verilog (or ghdl-yosys-plugin) → apio | stretch — verify GHDL availability alongside apio packages |
@@ -119,8 +121,37 @@ apio facts to respect (from apio 1.6 CLI): build picks up project sources in lex
 
 - **No** `boards.yaml`, **no** `lib/pins/*.yaml`, **no** Shepherd board registry
 - Project board id lives in **`apio.ini`** (v0: `sipeed-tang-nano-9k` only). Shepherd validates via apio (`apio boards` / project config)
-- Pin / part / programmer knowledge: use apio’s [supported boards](https://fpgawars.github.io/apio/docs/supported-boards/) and toolchain errors
+- Pin / part / programmer knowledge for *build*: use apio’s [supported boards](https://fpgawars.github.io/apio/docs/supported-boards/) and toolchain errors
 - Adding another board later = when apio supports it and we lift the v0 allowlist — no Shepherd catalog to maintain
+
+### Knowledge files + datasheets
+
+`knowledge/` is for **human/LLM reference**, not for replacing apio. Each supported board (v0: Tang Nano 9K) should identify the **correct datasheets** so diagnosis and `shepherd ask` cite the right docs.
+
+Suggested front matter in `knowledge/tangnano9k.md` (or a small sibling `knowledge/tangnano9k.datasheets.yaml` if we want structured lookup):
+
+```yaml
+# example structured block (keep in knowledge/, not a board registry)
+apio_board: sipeed-tang-nano-9k
+datasheets:
+  - id: gowin-gw1nr-9
+    title: GW1NR-9 / GW1NR series FPGA datasheet
+    role: fpga_device          # fpga_device | board | peripheral | programming
+    url: https://...          # canonical vendor URL
+    mirrors: []               # optional local path or alternate URL
+    notes: Use for pin banks, IO standards, timing
+  - id: sipeed-tang-nano-9k-schematic
+    title: Tang Nano 9K schematic / board doc
+    role: board
+    url: https://...
+    notes: On-board LED / UART / button net names
+```
+
+Rules:
+
+- Prefer **vendor URLs + document title/version** over pasting datasheet text into the repo
+- Agents must resolve datasheets by `apio_board` + `role` (e.g. pin question → `board` + `fpga_device`)
+- Do not invent electrical facts from memory when a datasheet entry exists — point to it
 
 ## Project config
 
@@ -224,7 +255,7 @@ src/shepherd/
     adopt.py
     verify.py
   knowledge/
-    tangnano9k.md           # optional prose for LLM context (not a pin DB)
+    tangnano9k.md           # board context for LLM + datasheet pointers (see below)
     errors/                 # known error signatures (regex → cause → fix)
       yosys.yaml
       nextpnr.yaml
