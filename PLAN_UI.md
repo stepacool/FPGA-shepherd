@@ -93,15 +93,60 @@ Optional later: `command_requests` table if we want the UI to enqueue work witho
 | Live updates | Poll events every ~200–500 ms while a run is active | Demo-simple |
 | Charts / scope | See Waveforms below | Don’t pull heavy dashboards |
 
-**Pages / areas (v0):**
+## What we show in the UI
 
-1. **Project** — path to `shepherd.toml`, board, top, last verdict  
-2. **Run** — live event feed (steps + log lines + verdict)  
-3. **Doctor** — trigger `shepherd doctor`, show checklist events  
-4. **Explain / Ask** — show AI findings from events; trigger `shepherd explain` / `shepherd ask` via CLI spawn  
-5. **Artifacts** — links to log files / bitstream paths from `payload_json`
+Think of the UI as a **control room for Shepherd**, not a full IDE and not a second toolchain.
 
-Advanced “show backend” can be a toggle that reveals `backend_cmd` fields from payloads — still Shepherd terms by default.
+### Screens (v0 — ship for demo)
+
+| Screen | What the user sees | Data source |
+| --- | --- | --- |
+| **Project** | Project path, board (`tangnano9k`), top module, sources summary, last verdict badge | `shepherd.toml` + latest `runs` row |
+| **Run (live)** | Step timeline (adapter → synth → P&R → pack → upload → verify), scrolling log lines, current step highlight, final **pass / warn / fail** + fix list | `events` table (poll) |
+| **Doctor** | Checklist items turning green/red; “Fix” button that spawns `shepherd doctor --fix` | `events` from a doctor run |
+| **Explain** | Last failure cause + proposed fix (Shepherd terms); optional “apply diff?” confirmation later | `events` kind `verdict` / ask payloads + log paths |
+| **Ask** | Simple prompt box; answer streamed/written as events | spawn `shepherd ask "…"` → events |
+| **Artifacts** | Clickable list: log files, bitstream `.fs`, emitted Verilog, sim **VCD** (when present) | `artifact` events with **file paths** (not file blobs in the DB) |
+
+Optional toggle: **Show backend commands** — reveals underlying tool lines for judges; default off.
+
+### Screens (v0.5 — waveforms)
+
+| Screen | What the user sees |
+| --- | --- |
+| **Waveforms (sim)** | After `shepherd sim`, an embedded **Surfer** view of the **VCD**/FST file for that run (zoom, cursors, digital channels) |
+| **Scope (UART) — later** | Strip chart of samples from the board (LEDs/UART payload decoded), not a full lab oscilloscope |
+
+### What we deliberately do *not* show (v0)
+
+- Raw apio / nextpnr walls of text as the primary UX (logs available via Artifacts / `-v`-equivalent)
+- Full code editor / project tree like VS Code (users keep their editor)
+- Live FPGA pin probe without a capture path (sim VCD or UART stream first)
+
+### Example Run screen (illustrative)
+
+```text
+Project: examples/blinky_sv    board: tangnano9k    top: blinky
+
+[ Build ]  [ Upload ]  [ Sim ]  [ Doctor ]  [ Explain ]
+
+Steps
+  ✓ HDL adapter
+  ✓ synth
+  ✗ pnr          ← selected
+  · pack
+  · upload
+  · verify
+
+Log (pnr)
+  … ERROR: port uart_tx unconstrained …
+
+Verdict: FAIL
+  cause: port `uart_tx` has no IO_LOC in tangnano9k.cst
+  fix:   add IO_LOC "uart_tx" 17; — [Apply?] [Copy]
+
+Artifacts: pnr.log  |  (no bitstream)
+```
 
 ## Triggering Shepherd from the UI
 
@@ -114,17 +159,40 @@ Server Action / Route Handler:
 
 Do **not** reimplement build in Node. Do **not** call apio from the UI.
 
-## Waveforms (“oscilloscope”)
+## Waveforms (“oscilloscope”) — yes, we can show them
 
-Phased so the demo stays light:
+**Yes** — for simulation waveforms and (later) simple live traces. Important split:
 
-| Phase | Need | Approach |
+| Kind | How we show it | In SQLite? |
 | --- | --- | --- |
-| **v0** | Live run UX | Event feed only — no scope |
-| **v0.5** | Sim waveforms | After `shepherd sim`, open / embed **Surfer** (**WASM**) on the **VCD**/FST artifact path stored in an `artifact` event |
-| **later** | Live UART samples | Shepherd writes sample events or a side table; UI plots with **uPlot** or canvas |
+| **Sim waveforms (VCD/FST)** | Shepherd runs `sim` → writes file under `.shepherd/…` → DB stores an **`artifact` event with the path** → UI embeds **Surfer (WASM)** pointed at that file | Path + metadata only |
+| **Build/run progress** | Event feed on Run screen | Yes — small text rows |
+| **Live UART “scope”** | Shepherd (or a helper) appends samples; UI plots with **uPlot** / canvas | Optional small sample table *or* a side file (CSV/binary) + path in DB |
 
-Do not adopt heavy instrumentation frameworks for the hackathon.
+**Do not** put multi‑MB VCD blobs inside SQLite. Waveform engines want a file (or memory map); the DB only points at it.
+
+Phasing:
+
+| Phase | Ship |
+| --- | --- |
+| **v0** | Run / Doctor / Explain / Ask / Artifacts (paths) — **no** waveform viewer required |
+| **v0.5** | **Sim waveforms** via Surfer embed when a VCD artifact exists |
+| **later** | Live UART strip chart |
+
+## Database choice
+
+**SQLite is enough** for the demo event bus (runs + events + artifact paths). Easy for Python and Next.js, one file next to the project, no server.
+
+| Need | Recommendation |
+| --- | --- |
+| Run steps, logs lines, verdicts, ask text | **SQLite** (default) |
+| VCD / bitstream / big logs | **Files on disk**; DB holds path |
+| Live UART at modest rate | SQLite sample table **or** append-only file; still fine for hackathon |
+| Multi-user / remote UI later | Then consider Postgres — **not** required now |
+
+Other easy DBs if we outgrow SQLite *for events only*: **DuckDB** (same “file DB” feel, great analytics, overkill for v0) or **Postgres** via Docker (more moving parts). Stay on **SQLite** unless we hit concurrent-writer pain or remote multi-client needs.
+
+**Default decision:** SQLite for events; files for waveforms and bitstreams; Surfer for viewing sim waveforms.
 
 ## Repo layout (UI-related)
 
