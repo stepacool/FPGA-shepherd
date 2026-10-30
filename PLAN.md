@@ -4,7 +4,7 @@
 
 Ship a **hackathon-ready, reusable tool** that helps people **build Tang Nano 9K projects quickly from natural language**.
 
-The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read IMU sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold → validate → build → program** via CLI.
+The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read IMU sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold → validate → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
 
 Colleagues and later users can run it, fork it, and add new agents/tools. **v0 board support: Tang Nano 9K only.**
 
@@ -32,9 +32,28 @@ flowchart TD
   Confirm --> Toolchain[ToolchainAgent]
   Confirm --> Design[DesignAgent_scaffold_RTL_CST]
   Design --> Project[ProjectAgent_validate]
-  Project --> Build[BuildProgramAgent]
-  Build --> Done[Report_next_steps]
+  Project --> Verify1[VerifyAgent_after_validate]
+  Verify1 --> Build[BuildProgramAgent]
+  Build --> Verify2[VerifyAgent_after_build_or_program]
+  Verify2 --> Done[Report_next_steps]
 ```
+
+### Auto-check policy (VerifyAgent)
+
+After **every** `validate`, `build`, and `program` step (chat pipeline *and* direct CLI commands), Shepherd **always** runs **VerifyAgent**. It does not replace exit codes; it interprets them plus logs/artifacts and returns a structured verdict:
+
+| After | What VerifyAgent checks | Verdict shape |
+| --- | --- | --- |
+| **validate** | Required files present, top module, `.cst` vs ports, obvious pin mistakes | `pass` / `fail` + fix list; block build on `fail` unless user overrides |
+| **build** | Tool exit codes, yosys/nextpnr/gowin_pack stderr, bitstream `.fs` exists & non-empty, timing/resource warnings worth mentioning | `pass` / `warn` / `fail` + whether to retry or edit RTL |
+| **program** | openFPGALoader output, USB/device detect clues, success phrases vs cable errors | `pass` / `fail` + next human checks (LEDs, UART) when hardware can’t be sensed |
+
+Rules:
+
+- Deterministic facts first (exit code, file exists); Meta Llama explains and prioritizes fixes
+- On `fail`, Shepherd stops the happy-path pipeline, shows the verdict, and may loop back to Design/Project/Build with the user’s OK
+- On `warn`, continue but surface warnings clearly
+- VerifyAgent is independently runnable: `shepherd check --stage validate|build|program --project …`
 
 Example:
 
@@ -46,10 +65,10 @@ Example:
    - Output preference (LEDs, UART serial, both)?
    - New project path or existing folder?
 4. Shepherd proposes a short plan (files to create, pins, build/program).
-5. After user OK: scaffold Verilog + `.cst` → validate → build → program Tang Nano 9K.
-6. Report success / errors and what to try next (e.g. open serial monitor).
+5. After user OK: scaffold Verilog + `.cst` → validate → **auto-check** → build → **auto-check** → program → **auto-check**.
+6. Report success / errors and what to try next (e.g. open serial monitor), using VerifyAgent’s last verdict.
 
-Direct commands (`doctor`, `validate`, `build`, `program`) remain available for power users and for testing agents in isolation.
+Direct commands (`doctor`, `validate`, `build`, `program`) remain available for power users; validate/build/program still trigger auto-check unless `--no-check` is passed.
 
 ## Agent map (independent, step-aligned)
 
