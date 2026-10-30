@@ -2,9 +2,9 @@
 
 ## Goal
 
-Ship a **hackathon-ready, reusable tool** that helps people **build Tang Nano 9K projects quickly from natural language**.
+Ship a **hackathon-ready, reusable tool** that helps people **build Tang Nano 9K projects quickly from natural language (NL)** — ordinary human wording, not code or CLI flags.
 
-The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read IMU sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold → validate → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
+The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read inertial measurement unit (IMU) sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold → validate → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
 
 Colleagues and later users can run it, fork it, and add new agents/tools. **v0 board support: Tang Nano 9K only.**
 
@@ -45,8 +45,8 @@ After **every** `validate`, `build`, and `program` step (chat pipeline *and* dir
 | After | What VerifyAgent checks | Verdict shape |
 | --- | --- | --- |
 | **validate** | Required files present, top module, `.cst` vs ports, obvious pin mistakes | `pass` / `fail` + fix list; block build on `fail` unless user overrides |
-| **build** | Tool exit codes, yosys/nextpnr/gowin_pack stderr, bitstream `.fs` exists & non-empty, timing/resource warnings worth mentioning | `pass` / `warn` / `fail` + whether to retry or edit RTL |
-| **program** | openFPGALoader output, USB/device detect clues, success phrases vs cable errors | `pass` / `fail` + next human checks (LEDs, UART) when hardware can’t be sensed |
+| **build** | Tool exit codes, yosys/nextpnr/gowin_pack stderr, bitstream `.fs` exists & non-empty, timing/resource warnings worth mentioning | `pass` / `warn` / `fail` + whether to retry or edit register-transfer level (RTL) code |
+| **program** | openFPGALoader output, USB/device detect clues, success phrases vs cable errors | `pass` / `fail` + next human checks (LEDs, universal asynchronous receiver-transmitter (UART)) when hardware can’t be sensed |
 
 Rules:
 
@@ -60,7 +60,7 @@ Example:
 1. Shepherd: *How can we help you today?*
 2. User: *Help me read IMU sensor data on my Tang Nano 9K.*
 3. GuideAgent asks only what’s needed, e.g.:
-   - Which IMU / interface (I2C? SPI? module name if known)?
+   - Which IMU / interface (Inter-Integrated Circuit (I2C)? Serial Peripheral Interface (SPI)? module name if known)?
    - Which pins / PMOD / header?
    - Output preference (LEDs, UART serial, both)?
    - New project path or existing folder?
@@ -96,7 +96,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | **Shepherd** | Orchestrator + session host | Ask how we can help; route to specialists; **always invoke VerifyAgent after validate/build/program**; keep structured session context; final report | Agent dispatch + interactive prompts |
 | **GuideAgent** | Intent → plan | Parse NL goal; ask clarifying questions; produce a confirmed build plan (interfaces, pins, artifacts, success criteria). **Tang Nano 9K only** — refuse/redirect other boards | Chat + structured plan object |
-| **DesignAgent** | Scaffold project | From confirmed plan, create/update project dir: `top.v` (+ modules), `.cst`, README snippet for the design | File write tools; board pin knowledge for Tang Nano 9K |
+| **DesignAgent** | Scaffold project | From confirmed plan, create/update project dir: `top.v` (+ modules), constraints (`.cst`), README snippet for the design | File write tools; board pin knowledge for Tang Nano 9K |
 | **EnvAgent** | Step 1 (adapted) | Check Cursor/VS Code + optional Lushay Code; report readiness. Does not block CLI flow if extension missing | `cursor`/`code` extension list/install when available |
 | **ToolchainAgent** | Step 2 | Detect/install/verify OSS CAD Suite; ensure `yosys`, `nextpnr-*`, `gowin_pack`, `openFPGALoader` | Download/extract, config path, smoke-test binaries |
 | **ProjectAgent** | Step 3 | Validate project: ≥1 `.v`, ≥1 `.cst`, top module (`top` default), pin sanity | Filesystem + heuristics + fix suggestions |
@@ -154,8 +154,8 @@ src/shepherd/
   agents/
     base.py
     shepherd.py           # orchestrator + chat host
-    guide.py              # NL goal + clarifying questions
-    design.py             # scaffold Verilog + .cst
+    guide.py              # natural language (NL) goal + clarifying questions
+    design.py             # scaffold Verilog + constraints (.cst)
     env.py
     toolchain.py
     project.py
