@@ -1,203 +1,221 @@
-# FPGA Shepherd — Multi-Agent FPGA Programming Toolkit
+# FPGA Shepherd — AI devkit layer on top of apio
 
 ## Goal
 
-Ship a **hackathon-ready, reusable tool** that helps people **build Tang Nano 9K projects quickly from natural language (NL)** — ordinary human wording, not code or CLI flags.
+Ship a **hackathon-ready devkit** for people who already write RTL: they bring their own design, Shepherd takes care of the annoying parts around it.
 
-The user opens Shepherd, we ask something like **“How can we help you today?”**, they say e.g. *“help me read inertial measurement unit (IMU) sensor data on my Tang Nano 9K”*, and Meta Llama–powered agents **clarify → scaffold Amaranth → validate → (optional sim) → build → program**, with an **automatic AI check after each of validate / build / program** to judge whether things look good and what to fix next.
+Shepherd is a **thin, transparent layer on top of [apio](https://fpgawars.github.io/apio/docs)**. apio already installs and pins the open toolchain and runs build / upload / lint / sim. Shepherd adds what apio does not do:
 
-Colleagues and later users can run it, fork it, and add new agents/tools. **v0 board support: Tang Nano 9K only.**
+1. **Right front end for your HDL** — Verilog/SystemVerilog go straight to apio; Amaranth (and later VHDL, SpinalHDL, Chisel) are elaborated to Verilog first, then handed to apio
+2. **Board-aware constraint checks** — catch bad pins, bank-voltage mismatches and on-board conflicts *before* synthesis
+3. **Failure diagnosis** — turn Yosys / nextpnr / openFPGALoader output into a cause + concrete fix (Meta Llama, after deterministic matchers)
+4. **Environment fixing** — drivers, udev, USB detection, apio packages; propose the exact command, run it with the user’s OK
+5. **Project adoption** — point Shepherd at an existing repo; it detects HDL, top module and sources and writes `apio.ini`
+
+**Audience:** competent FPGA / digital-design engineers. Not a “describe your idea in English” app builder.
+**v0 board support: Tang Nano 9K only** (apio board id `sipeed-tang-nano-9k`).
+
+## Pitch
+
+> You write the RTL — in whatever HDL you use. Shepherd picks the right front end, checks your constraints against the board, builds and flashes through apio, and when something breaks it tells you why and how to fix it.
+
+## Design principles
+
+- **apio does the toolchain work.** Shepherd never re-implements synthesis, P&R, packing or programming. Bugs or missing boards in apio go upstream, not into Shepherd
+- **Call the apio CLI, don’t import its internals.** apio is driven as a subprocess; its Python internals are not a stable API. Minimum apio version pinned and checked by `doctor`
+- **Transparent by default.** Every command Shepherd runs is printed; raw apio output is always shown (or one flag away). The AI verdict comes *after* the raw log, never instead of it
+- **Deterministic first, AI second.** Front-end choice, flags, pin checks and known error signatures are plain code. Meta Llama explains, prioritizes and handles the long tail — it never silently picks flags
+- **Never mutate the user’s project without consent.** AI-proposed edits (`.cst`, `apio.ini`, source) are shown as diffs and applied only on confirmation
+- **Works offline.** `--no-ai` runs everything except explanations; deterministic checks still fire
+- **Passthrough always available.** `shepherd apio -- <args>` runs raw apio in the project context
 
 ## Product shape
 
-A small **Python CLI package** (`fpga-shepherd` / `shepherd`) that:
+A small **Python CLI package** (`fpga-shepherd`, command `shepherd`):
 
-- Starts an **interactive guided session** (prompt + clarifying questions), not only one-shot commands
-- Talks to **Meta Llama** (`META_API_KEY` + `META_BASE_URL` + model id via env)
-- Runs **independent specialist agents** with shared tool interfaces
-- Is **Amaranth-first**: DesignAgent scaffolds [Amaranth](https://amaranth-lang.org/docs/amaranth/latest/install.html) Python as the source of truth; Verilog is an **emitted artifact** for the open toolchain
-- Builds/programs Tang Nano 9K via CLI (Amaranth convert → OSS CAD Suite / YoWASP Gowin path → `openFPGALoader`) — not the Lushay VS Code UI
-- Uses **`uv`** as the standard way to create the environment and install libraries
-- Is easy to extend: new agent = new module + tool registrations + prompt
+- Command surface mirrors apio (`build`, `upload`, `lint`, `sim`, `test`, `report`) so muscle memory transfers; Shepherd adds pre-steps (front end, constraint check) and post-steps (verify + diagnose)
+- Talks to **Meta Llama** (`META_API_KEY` + `META_BASE_URL` + model id via env), OpenAI-compatible client
+- Uses **`uv`** for its own env; **apio is a pinned dependency** of the package (`uv add apio`), so `uv run shepherd` always gets a known apio version
+- Machine-readable output (`--json`) for CI and editor integrations
+- Extensible: new front end / board / error signature / agent = new module + registration
 
-Lushay Code remains an optional human UX note in docs; agents do not drive the extension UI.
-
-## Primary user journey (what we optimize for)
+## Primary flow
 
 ```mermaid
 flowchart TD
-  Start[shepherd_chat] --> Ask[How_can_we_help_today]
-  Ask --> Goal[User_NL_goal]
-  Goal --> Guide[GuideAgent_clarify_and_plan]
-  Guide --> Confirm[User_confirms_plan]
-  Confirm --> Env[EnvAgent]
-  Confirm --> Toolchain[ToolchainAgent]
-  Confirm --> Design[DesignAgent_scaffold_Amaranth]
-  Design --> Project[ProjectAgent_validate]
-  Project --> Verify1[VerifyAgent_after_validate]
-  Verify1 --> Sim[optional_Amaranth_sim]
-  Sim --> Build[BuildProgramAgent]
-  Build --> Verify2[VerifyAgent_after_build_or_program]
-  Verify2 --> Done[Report_next_steps]
+  Cmd[shepherd_build_or_upload] --> Detect[Detect_project_and_HDL]
+  Detect --> FE[Frontend_emit_Verilog_if_needed]
+  FE --> Pins[Constraint_check_cst_vs_board]
+  Pins -->|fail| Report[Verdict_and_fix]
+  Pins -->|pass_or_warn| Apio[apio_build_or_upload]
+  Apio --> Match[Known_error_signatures]
+  Match --> Verify[VerifyAgent_verdict]
+  Verify --> Report
+  Report -->|user_OK| Fix[Apply_fix_diff_or_command]
+  Fix --> Cmd
 ```
 
-### Auto-check policy (VerifyAgent)
+Example (experienced user, existing Verilog repo; output illustrative — real pin/bank facts come from `lib/pins/tangnano9k.yaml`):
 
-After **every** `validate`, `build`, and `program` step (chat pipeline *and* direct CLI commands), Shepherd **always** runs **VerifyAgent**. It does not replace exit codes; it interprets them plus logs/artifacts and returns a structured verdict:
+```text
+$ shepherd build
+→ detected: SystemVerilog, top=blinky, board=sipeed-tang-nano-9k
+→ pins: WARN  `led[0]` IO_TYPE=LVCMOS33 doesn't match bank <n> voltage (<v>) on the 9K
+$ apio build -p .
+... raw apio output ...
+→ verdict: FAIL  (signature: nextpnr-unconstrained-io)
+   cause: port `uart_tx` has no IO_LOC in tangnano9k.cst
+   fix:   add `IO_LOC "uart_tx" 17;` (on-board USB-UART TX) — apply? [y/N]
+```
 
-| After | What VerifyAgent checks | Verdict shape |
+## Auto-check policy (VerifyAgent)
+
+After **every** `build`, `upload`, `lint`, `test` (and on demand via `shepherd check`), Shepherd runs VerifyAgent unless `--no-check`.
+
+| After | Deterministic facts | AI adds |
 | --- | --- | --- |
-| **validate** | Amaranth entry module present, project layout, pin/platform mapping, emit/constraints sanity | `pass` / `fail` + fix list; block build on `fail` unless user overrides |
-| **build** | Tool exit codes, convert/synth/P&R logs, bitstream `.fs` exists & non-empty, timing/resource warnings | `pass` / `warn` / `fail` + whether to retry or edit Amaranth |
-| **program** | openFPGALoader output, USB/device detect clues, success vs cable errors | `pass` / `fail` + next human checks (LEDs, universal asynchronous receiver-transmitter (UART)) when hardware can’t be sensed |
+| **front end** | emitter exit code, Verilog produced, top module present | why elaboration failed, in source terms |
+| **pins** | pin exists on package, bank voltage vs `IO_TYPE`, conflicts with on-board peripherals, unconstrained top-level ports | which fix is most likely intended |
+| **build** | apio exit code, bitstream exists & non-empty, utilization/timing from `apio report` | cause + fix for synth/P&R failures; retry with `--verbose-synth` / `--verbose-pnr` when output is too thin |
+| **upload** | openFPGALoader output, `apio devices` scan, SRAM vs flash | driver / udev / cable / board-mode fixes |
+| **lint / test** | Verilator / testbench exit codes | grouped, deduplicated findings |
 
 Rules:
 
-- Deterministic facts first (exit code, file exists); Meta Llama explains and prioritizes fixes
-- On `fail`, Shepherd stops the happy-path pipeline, shows the verdict, and may loop back to Design/Project/Build with the user’s OK
-- On `warn`, continue but surface warnings clearly
-- After validate, Shepherd may run a short **Amaranth simulation** when the plan includes testable behavior; VerifyAgent can include sim results
-- VerifyAgent is independently runnable: `shepherd check --stage validate|build|program --project …`
+- Verdict is `pass` / `warn` / `fail` + fix list; `fail` stops the pipeline
+- Known error signatures (`knowledge/errors/*.yaml`, regex + explanation + fix) are matched **before** calling the LLM; an LLM-diagnosed error that recurs is a candidate for a new signature
+- The LLM gets: the command run, trimmed logs, `apio.ini`, `.cst`, board facts, and relevant source snippets — never the whole repo by default
+- `shepherd explain [LOGFILE]` diagnoses the last run or any pasted log
 
-Example:
+## Agents (small, step-aligned)
 
-1. Shepherd: *How can we help you today?*
-2. User: *Help me read IMU sensor data on my Tang Nano 9K.*
-3. GuideAgent asks only what’s needed, e.g.:
-   - Which IMU / interface (Inter-Integrated Circuit (I2C)? Serial Peripheral Interface (SPI)? module name if known)?
-   - Which pins / PMOD / header?
-   - Output preference (LEDs, UART serial, both)?
-   - New project path or existing folder?
-4. Shepherd proposes a short plan (Amaranth modules, pins, build/program).
-5. After user OK: scaffold Amaranth project → validate → **auto-check** → (optional sim) → emit Verilog → build → **auto-check** → program → **auto-check**.
-6. Report success / errors and what to try next (e.g. open serial monitor), using VerifyAgent’s last verdict.
+Fewer agents than a chat-app design: most of the pipeline is deterministic tools; agents exist where judgment helps.
 
-Direct commands (`doctor`, `validate`, `build`, `program`) remain available for power users; validate/build/program still trigger auto-check unless `--no-check` is passed.
+| Agent | Responsibility | Acts via |
+| --- | --- | --- |
+| **Shepherd** (orchestrator) | Run the pipeline for a command; always invoke VerifyAgent after steps; write the run record | Tool dispatch, no chat by default |
+| **DoctorAgent** | Check Python/uv, apio version, `apio packages`, drivers, udev, connected devices; propose exact fix commands | `apio packages list/install`, `apio drivers install`, `apio devices`, shell checks |
+| **AdoptAgent** | Adopt an existing repo: detect HDL(s), candidate top modules, sources/testbenches, `.cst`; propose `apio.ini` + `shepherd.toml` | Filesystem scan + `apio create -b … -t …` |
+| **PinAgent** | Explain constraint-check findings; propose `.cst` diffs from board facts | `lib/` pin checker + `knowledge/tangnano9k.md` |
+| **VerifyAgent** | Verdict after each step: deterministic facts + signature match + Meta Llama diagnosis | Log parsers, `apio report`, signature DB |
 
-## Agent map (independent, step-aligned)
+`shepherd ask "..."` is an optional Q&A mode with the project and last run as context (e.g. “why is fmax 27 MHz?”). It is a helper, not the main entry point.
 
-```mermaid
-flowchart LR
-  User[User_or_CLI] --> Shepherd[Shepherd_orchestrator]
-  Shepherd --> Guide[GuideAgent]
-  Shepherd --> Design[DesignAgent]
-  Shepherd --> Env[EnvAgent]
-  Shepherd --> Toolchain[ToolchainAgent]
-  Shepherd --> Project[ProjectAgent]
-  Shepherd --> Build[BuildProgramAgent]
-  Shepherd --> Verify[VerifyAgent]
-  Guide --> Chat[clarify_questions]
-  Design --> AmaranthFiles[write_amaranth_py]
-  Env --> ShellTools[shell_fs_checks]
-  Toolchain --> UvAndSuite[uv_sync_and_fpga_tools]
-  Project --> AmaranthLayout[amaranth_project_validate]
-  Build --> Convert[amaranth_to_verilog]
-  Build --> YosysNextpnr[yosys_nextpnr_gowin_pack]
-  Build --> Loader[openFPGALoader]
-  Verify --> Logs[logs_artifacts_sim_usb]
-```
+## Front ends (“right compiler”)
 
-| Agent | Role | Responsibility | Acts via |
-| --- | --- | --- | --- |
-| **Shepherd** | Orchestrator + session host | Ask how we can help; route to specialists; **always invoke VerifyAgent after validate/build/program**; keep structured session context; final report | Agent dispatch + interactive prompts |
-| **GuideAgent** | Intent → plan | Parse NL goal; ask clarifying questions; produce a confirmed build plan (interfaces, pins, Amaranth modules, success criteria). **Tang Nano 9K only** — refuse/redirect other boards | Chat + structured plan object |
-| **DesignAgent** | Scaffold project (**Amaranth-first**) | From confirmed plan, create/update project: Amaranth Python modules, Tang Nano 9K platform/pin wiring, optional sim stub, README snippet. Raw hand-written Verilog is not the default | File write tools; `lib/board_tangnano9k.py`; Amaranth APIs |
-| **EnvAgent** | Step 1 (adapted) | Check Cursor/VS Code + optional Lushay Code; report readiness. Does not block CLI flow if extension missing | `cursor`/`code` extension list/install when available |
-| **ToolchainAgent** | Step 2 | Ensure **`uv`** project env + Amaranth deps; detect/verify FPGA CLI tools (`yosys`, nextpnr, `gowin_pack`, `openFPGALoader` via OSS CAD Suite and/or YoWASP) | `uv sync`, suite path config, smoke-test binaries |
-| **ProjectAgent** | Step 3 | Validate Amaranth project layout, entrypoint, board id from `boards.yaml`, pin mapping sanity | Filesystem + Amaranth import checks + fix suggestions |
-| **BuildProgramAgent** | Step 4 | Convert Amaranth → Verilog → synthesize → P&R → pack → program; capture full logs for VerifyAgent | Amaranth convert/build helpers; `openFPGALoader -b tangnano9k` |
-| **VerifyAgent** | Auto-check | After validate/build/program: read exit codes, logs, artifacts, optional sim, USB detect; emit `pass`/`warn`/`fail` + plain-language fixes | Log/artifact/sim tools + Meta Llama judgment |
+| HDL | v0 path | Status |
+| --- | --- | --- |
+| Verilog (`.v`) | apio directly | v0 |
+| SystemVerilog (`.sv`) | apio directly (apio/Yosys SV support) | v0 — verify which SV constructs the bundled Yosys accepts; surface clear errors |
+| Amaranth (`.py`) | Amaranth elaborate → Verilog into staging dir → apio | v0 |
+| VHDL | GHDL synth → Verilog (or ghdl-yosys-plugin) → apio | stretch — verify GHDL availability alongside apio packages |
+| SpinalHDL / Chisel | run user’s generator → Verilog → apio | later |
 
-Each specialist is **independently invokable** (`shepherd run guide`, `shepherd run design`, …) and also used inside `shepherd chat` / `shepherd run`.
+Mixed-language projects: each non-Verilog source is emitted to Verilog, then everything is built as one apio project.
 
-## Board constraint (v0)
+**Staging:** generated projects live in `.shepherd/build/` (generated `.v` + copied `.cst` + generated `apio.ini`) so the user’s tree stays clean. Plain Verilog/SV projects use the user’s own `apio.ini` in place.
 
-- **Supported boards are declared in one registry file** (see below). v0 lists **Tang Nano 9K only**.
-- GuideAgent / Shepherd load that file as the allowlist — do not hardcode board names in agent prompts alone
-- If the user names another board, GuideAgent explains it is unsupported and continues only if they agree to target a listed board
-- Per-board pin helpers and `knowledge/*.md` stay optional extras; the registry is the source of truth for “do we support this?”
+apio facts to respect (from apio 1.6 CLI): build picks up project sources in lexicographic order, ignores `*_tb.v` / `*_tb.sv`, top module comes from `apio.ini` `top-module`; `apio upload` builds implicitly.
 
-### Boards registry format
+## Board registry (overlay on apio)
 
-Prefer **YAML** (`boards.yaml`): easy for teammates to read/edit, comments allowed, maps cleanly to structured Python.
-
-Canonical path: [`boards.yaml`](boards.yaml) at the **repo root** (also importable from package data if we package later).
+apio already owns board definitions (FPGA part, programmer). `boards.yaml` **references apio’s board id** and only adds what apio lacks: pin/bank knowledge and on-board peripherals for constraint checks.
 
 ```yaml
-# boards.yaml — supported FPGA boards (source of truth for allowlist)
+# boards.yaml — boards Shepherd supports (overlay on apio board definitions)
 version: 1
 default_board: tangnano9k
 boards:
   tangnano9k:
     name: Tang Nano 9K
-    aliases:
-      - tang nano 9k
-      - tangnano 9k
-      - sipeed tang nano 9k
+    apio_board: sipeed-tang-nano-9k   # source of truth for part + programmer
     supported: true
-    vendor: Sipeed
-    fpga:
-      family: GW1N-9C
-      device: GW1NR-LV9QN88PC6/I5
-    openfpgaloader:
-      board: tangnano9k
-    design:
-      hdl: amaranth          # source of truth
-      emit: verilog          # build artifact
+    aliases: [tang nano 9k, tangnano9k, sipeed tang nano 9k]
     constraints:
       extension: .cst
-    notes: v0 only supported board
+    pins: lib/pins/tangnano9k.yaml    # package pins, banks, voltages, on-board peripherals
+    knowledge: knowledge/tangnano9k.md
+    open_flow_limits:                 # features the open flow can’t use (or needs workarounds for)
+      - psram                         # verify current Apicula status before claiming
 ```
 
 Rules:
 
-- `boards.<id>.supported: true` is required for Shepherd to accept that board
-- `default_board` must reference an existing supported id
-- Adding a board later = new YAML entry + optional `knowledge/<id>.md` + `lib/board_*.py` — GuideAgent picks it up from the registry
+- `supported: true` + a valid `apio_board` (checked against `apio boards`) required
+- Pin / bank / peripheral data comes from Sipeed schematics and Gowin datasheets, **not** LLM memory; each entry cites its source
+- Adding a board = YAML entry + `lib/pins/<id>.yaml` + optional knowledge file — no code changes
+
+## Project config
+
+- **`apio.ini`** stays apio’s file (board, top-module, envs). Shepherd reads/writes it but does not add custom keys
+- **`shepherd.toml`** (optional) holds Shepherd-only settings: front end per source glob, staging on/off, AI on/off, extra context files
+
+```toml
+[frontend]
+amaranth = { entry = "rtl/top.py:Top" }
+
+[checks]
+pins = "error"        # error | warn | off
+ai = true
+```
+
+## Run record (replaces chat session context)
+
+Every run writes `.shepherd/runs/<timestamp>.json`:
+
+```text
+{
+  command,            # e.g. build
+  project_path,
+  board,              # tangnano9k / apio board id
+  hdl,                # detected languages
+  steps: [            # frontend | pins | apio | verify
+    { name, cmd, exit_code, log_path, duration }
+  ],
+  artifacts,          # emitted .v, .cst, bitstream
+  verdict,            # pass | warn | fail
+  findings,           # signature matches + AI diagnosis + proposed fixes
+  apio_version
+}
+```
+
+`shepherd explain` and `shepherd ask` read the latest run record.
+
+## CLI
+
+| Command | Does |
+| --- | --- |
+| `shepherd doctor [--fix]` | Env + apio + packages + drivers + devices checklist; `--fix` proposes/runs fixes with confirmation |
+| `shepherd init [PATH]` | Adopt existing repo (AdoptAgent) or create a minimal project; writes `apio.ini` (+ `shepherd.toml` if needed) |
+| `shepherd build` | Front end → pins → `apio build` → verify |
+| `shepherd upload [--flash]` | Front end → pins → `apio upload` → verify |
+| `shepherd lint` / `sim` / `test` / `report` | Front end → matching apio command → verify where useful |
+| `shepherd pins` | Constraint check only |
+| `shepherd check --stage …` | VerifyAgent on the last run |
+| `shepherd explain [LOG]` | Diagnose last failure or any log |
+| `shepherd ask "…"` | Optional Q&A with project + last run as context |
+| `shepherd apio -- <args>` | Raw apio passthrough |
+
+Global flags: `--no-ai`, `--no-check`, `--json`, `--dry-run` (print commands only), `-v` (stream raw output).
 
 ## Default technical decisions
 
 - **Language**: Python 3.11+
-- **Package / env manager**: **`uv`** only for installs and virtualenvs (`uv sync`, `uv add`, `uv run`). Document `uv` in README; do not treat plain `pip install` as the primary path
-- **HDL**: **Amaranth-first** (Python HDL). DesignAgent writes Amaranth; build emits Verilog for the open Gowin flow. Hand-edited `.v` is out of band / advanced, not the default scaffold
-- **LLM**: Meta Llama via OpenAI-compatible HTTP client. Abstract behind `llm/client.py`
-- **Agent loop**: Lightweight ReAct-style loop (model ↔ tools ↔ observation), one loop per agent — no heavy framework lock-in
-- **Interaction**: `shepherd chat` is the default happy path (readline / prompt_toolkit style Q&A)
-- **Boards**: YAML registry at repo root (`boards.yaml`); Tang Nano 9K only in v0
+- **Env / packaging**: **`uv`** only (`uv sync`, `uv add`, `uv run`); `uv.lock` committed
+- **Toolchain**: apio (pinned, `>=1.6,<2`), its packages installed via `apio packages install`
+- **LLM**: Meta Llama via OpenAI-compatible HTTP client behind `llm/client.py`
+- **Agent loop**: lightweight ReAct-style loop per agent; no heavy framework
 - **OS**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
 
-### How teammates start (uv)
+### How teammates start
 
 ```bash
-# install uv once: https://docs.astral.sh/uv/
 cd FPGA-shepherd
 uv sync
-cp .env.example .env   # set META_API_KEY yourself
-uv run shepherd chat
-```
-
-Add dependencies with `uv add <package>` (e.g. Amaranth). Lockfile (`uv.lock`) is committed.
-
-## Session context (handoff object)
-
-Shared across agents:
-
-```text
-{
-  goal,                 # original user prompt
-  answers,              # Q&A from GuideAgent
-  plan,                 # confirmed steps + interfaces + pins
-  project_path,
-  board: "tangnano9k",
-  design_hdl: "amaranth",
-  oss_cad_path,
-  artifacts,            # .py (Amaranth) / emitted .v / .cst / .fs
-  last_step,            # validate | build | program | sim
-  last_logs,            # captured stdout/stderr from last tool run
-  last_verdict,         # VerifyAgent: pass | warn | fail + notes
-  errors
-}
+cp .env.example .env        # set META_API_KEY
+uv run shepherd doctor      # installs/validates apio packages with your OK
+cd examples/blinky_sv && uv run shepherd upload
 ```
 
 ## Proposed repo layout
@@ -205,101 +223,94 @@ Shared across agents:
 ```text
 PLAN.md
 README.md
-boards.yaml               # supported boards registry (Tang Nano 9K only in v0)
-pyproject.toml            # project metadata; managed with uv
-uv.lock                   # locked deps (committed)
+boards.yaml                 # supported boards (overlay on apio board ids)
+pyproject.toml              # uv-managed; depends on apio
+uv.lock
 .env.example
 src/shepherd/
   __init__.py
   cli.py
+  config.py                 # shepherd.toml + apio.ini read/write
+  runs.py                   # run records
+  boards.py                 # load/validate boards.yaml against `apio boards`
   llm/client.py
-  boards.py               # load/validate boards.yaml; allowlist helpers
+  apio/
+    runner.py               # subprocess wrapper, version check, log capture
+    parse.py                # apio / yosys / nextpnr / openFPGALoader output parsing
+  frontends/
+    base.py                 # Frontend protocol: detect(), emit() -> Verilog
+    verilog.py              # passthrough (.v / .sv)
+    amaranth.py
+    vhdl.py                 # stretch
+  checks/
+    pins.py                 # .cst vs board pin/bank/peripheral data
+    artifacts.py
   agents/
     base.py
-    shepherd.py           # orchestrator + chat host
-    guide.py              # natural language (NL) goal + clarifying questions
-    design.py             # scaffold Amaranth (not raw Verilog-first)
-    env.py
-    toolchain.py          # uv env + FPGA CLI tool checks
-    project.py
-    build_program.py      # Amaranth → Verilog → bitstream → program
-    verify.py             # auto-check after validate/build/program
-  tools/
-    shell.py
-    oss_cad.py
-    project_fs.py
-    amaranth_build.py     # convert / sim helpers
-    fpga_build.py
-    fpga_program.py
-    verify_logs.py        # parse/summarize toolchain + loader logs
-  lib/
-    board_tangnano9k.py   # pin / platform helpers for Amaranth (not agent tools)
+    shepherd.py             # orchestrator
+    doctor.py
+    adopt.py
+    pins.py
+    verify.py
+  lib/pins/
+    tangnano9k.yaml         # pins, banks, voltages, on-board peripherals (+ sources)
   knowledge/
-    tangnano9k.md         # board facts for Guide/Design prompts
-  config.py
-examples/button_led/      # minimal Amaranth fixture + guided-flow demo
-docs/extending.md
+    tangnano9k.md
+    errors/                 # known error signatures (regex → cause → fix)
+      yosys.yaml
+      nextpnr.yaml
+      openfpgaloader.yaml
+examples/
+  blinky_sv/                # plain SV, apio.ini
+  uart_amaranth/            # Amaranth front end
+  broken/                   # intentionally broken projects for demo + tests
+docs/extending.md           # new front end / board / signature / agent
 ```
-
-## Core CLI flows
-
-1. `uv run shepherd chat` — **primary**: “How can we help you today?” → guide → Amaranth scaffold → validate → **check** → build → **check** → program → **check**
-2. `uv run shepherd doctor` — Env + Toolchain checklist (`uv` + Amaranth + FPGA CLIs)
-3. `uv run shepherd validate --project PATH` — then auto VerifyAgent (skip with `--no-check`)
-4. `uv run shepherd build --project PATH` — then auto VerifyAgent
-5. `uv run shepherd program --project PATH` — build + load (SRAM default; `--flash` optional) → auto VerifyAgent
-6. `uv run shepherd check --stage … --project PATH` — VerifyAgent only
-7. `uv run shepherd run --goal "..."` — non-interactive pipeline when goal + enough flags are provided
-
-## Build/program command skeleton
-
-Amaranth-first pipeline:
-
-1. Amaranth design sources in the project (`*.py`)
-2. Optional: Amaranth simulator smoke test
-3. Convert / elaborate to Verilog (Amaranth)
-4. `yosys` Gowin synth → nextpnr → `gowin_pack` (OSS CAD Suite and/or YoWASP)
-5. `openFPGALoader -b tangnano9k design.fs`
 
 ## Extensibility
 
-- Stable **Tool** protocol: name, JSON schema, `run(**kwargs) -> ToolResult`
-- Stable **Agent** protocol: `name`, `system_prompt`, `tools`, `run(goal, context) -> AgentResult`
-- Later boards = new entry in `boards.yaml` + optional `knowledge/` + `lib/board_*.py`
-- Example stub in docs (e.g. `SimAgent` / UART listen)
-- New Python deps: always `uv add`, never ad-hoc global pip as the documented path
+- **Frontend** protocol: `detect(project) -> bool`, `emit(project, out_dir) -> list[Path]`
+- **Check** protocol: `run(project, board) -> list[Finding]`
+- **Error signature**: YAML entry (tool, regex, cause, fix template) — no code
+- **Agent** protocol: `name`, `system_prompt`, `tools`, `run(context) -> AgentResult`
+- **Board**: `boards.yaml` entry + `lib/pins/<id>.yaml`
 
 ## Out of scope for v0
 
+- Re-implementing anything apio does (toolchain install, synth/P&R, programming)
+- Natural-language → design scaffolding (possible later as an optional `shepherd new --describe`)
 - Boards other than Tang Nano 9K
-- Verilog-first scaffolding as the default (emitted Verilog only)
-- Driving Lushay Code UI / Computer Use
-- Windows installer polish
-- Fully autonomous hardware bring-up with no user confirmation on pin choices
-- Cloud/Lushay cloud builds
-- Guaranteeing every sensor datasheet is correct without user confirmation (GuideAgent must ask)
+- Gowin vendor EDA flow (may later detect when a design needs it and say so)
+- Windows polish
+- Auto-applying AI fixes without confirmation
+- Claiming functional correctness — Shepherd checks build/program health and constraints; behavior is the user’s testbench’s job (`shepherd test` runs it)
+
+## Hackathon demo script
+
+1. `shepherd doctor` on a fresh machine → missing apio packages / driver → fixed with one confirmation
+2. `shepherd init` on an existing SV repo without `apio.ini` → detected top + board → builds
+3. `examples/broken/` with a wrong `IO_TYPE` and an unconstrained port → caught by `shepherd pins` **before** synthesis, fix applied as a diff
+4. Amaranth project → `shepherd upload` → emitted Verilog → apio → board blinks / UART prints
+5. A nextpnr failure with an unknown signature → `shepherd explain` → Meta Llama diagnosis next to the raw log
 
 ## Implementation order
 
-1. Write / update **`PLAN.md`** (this document)
-2. Scaffold Python package with **`uv`** (`pyproject.toml`, `uv.lock`, CLI, Meta LLM client, `.env.example`); `uv add` Amaranth (+ builtin-yosys as needed)
-3. Add `boards.yaml` (Tang Nano 9K only, `design.hdl: amaranth`) + `boards.py` loader; implement tools (shell, OSS CAD, Amaranth convert/sim, project FS, build, program, board helpers, verify logs)
-4. Implement specialists: Guide, Design (**Amaranth-first**), Env, Toolchain (`uv` + FPGA tools), Project, BuildProgram, **Verify** + Shepherd chat host
-5. Example Amaranth project + `README.md` quickstart (`uv sync` / `uv run shepherd chat`; IMU-style guided example)
-6. Smoke-test: `chat` / `doctor` → `validate`+check → `build`+check; `program`+check when board connected
+1. Update **`PLAN.md`** (this document)
+2. Scaffold package with `uv` (`pyproject.toml`, `uv.lock`, CLI, `.env.example`); `uv add apio`
+3. `apio/runner.py` + `runs.py` + passthrough `shepherd apio --`; `build` / `upload` wrapping with log capture
+4. `boards.yaml` + `boards.py` + `lib/pins/tangnano9k.yaml` (sourced) + `checks/pins.py`
+5. Error signature DB + VerifyAgent (deterministic, then LLM) + `shepherd explain`
+6. DoctorAgent + `doctor --fix`
+7. Frontends: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
+8. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
+9. Smoke test: `doctor` → `init` → `pins` → `build` → `upload` on hardware; `--no-ai` and `--json` paths
 
 ## Success criteria
 
-- User can `uv sync` then `uv run shepherd chat`, state a Tang Nano 9K goal in plain language, answer a few questions, and get a scaffolded **Amaranth** project that builds
-- After validate/build/program, user always gets an AI verdict (`pass`/`warn`/`fail`) with concrete next steps — not just raw toolchain spam
-- Teammate can clone, set Meta API key, run `uv run shepherd doctor` and understand what’s missing
-- Each agent runnable alone; full pipeline programs Tang Nano 9K when hardware + tools present
-- Clear extension path for adding agents without rewriting the core loop
-- Meta model usage is explicit and central; **`uv`** is the documented install path
-
-## Human toolchain reference (agents use CLI equivalents)
-
-1. Optional editor extension (Lushay Code) for humans
-2. `uv` project env + Amaranth ([install guide](https://amaranth-lang.org/docs/amaranth/latest/install.html))
-3. FPGA open toolchain (OSS CAD Suite and/or YoWASP) + `openFPGALoader`
-4. Project: Amaranth sources → emit Verilog → build → program Tang Nano 9K
+- Experienced user runs `shepherd build` / `upload` in an existing Tang Nano 9K repo with zero new concepts beyond apio
+- Every run shows the exact apio command and raw output, then a `pass` / `warn` / `fail` verdict with concrete next steps
+- Constraint mistakes (bad pin, bank voltage, unconstrained port, on-board conflict) are caught before synthesis
+- An Amaranth project builds and programs through apio without the user wiring up the conversion
+- `shepherd doctor` gets a fresh macOS/Linux machine from nothing to a programmed board with only confirmations
+- `--no-ai` works for everything except explanations
+- Adding a board, front end or error signature needs no core changes
