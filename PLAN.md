@@ -73,6 +73,7 @@ A small **Python CLI package** (`fpga-shepherd`, command `shepherd`):
 - Uses `**uv**` for its own env; **apio is a pinned dependency** of the package (`uv add apio`), installed automatically with Shepherd — the user never installs it separately
 - Machine-readable output (`--json`) for **continuous integration (CI)** and editor integrations
 - Extensible: new HDL adapter / error signature / agent / backend = new module + registration
+- Optional web UI is specified in [`PLAN_UI.md`](PLAN_UI.md). **Demo integration is a shared SQLite events DB** — Shepherd writes events; the UI reads them. **No FastAPI** (or other HTTP job API) between them
 
 ## Primary flow
 
@@ -255,6 +256,22 @@ Every run writes `.shepherd/runs/<timestamp>/` (`run.json` + per-step logs):
 
 `shepherd explain` and `shepherd ask` read the latest run record.
 
+### Shared events DB (CLI + UI)
+
+For the hackathon demo (and optional Next.js UI), every run also appends to a **SQLite** database at `.shepherd/shepherd.db` (schema and polling details in [`PLAN_UI.md`](PLAN_UI.md)).
+
+```text
+shepherd CLI ──write──► SQLite events DB ◄──read── Next.js UI
+                 ▲
+                 └── same machine, no FastAPI in between
+```
+
+Rules:
+
+- File logs under `.shepherd/runs/` remain; the DB is the **live event stream** both sides share
+- Python owns writes (migrations + append). The UI only reads (and may spawn `uv run shepherd …` to start work)
+- **Do not** add a FastAPI/Express bridge for the demo — keep the path dumb and local
+
 ## CLI
 
 | Command | Does |
@@ -282,6 +299,7 @@ Advanced / hidden: `shepherd backend -- <args>` (see Backend layer).
 - **Operating system (OS)**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
 - **Credit**: README acknowledges apio as the build backend and we respect its license — hidden from the workflow, not from the **user experience (UX)** of the normal flow
+- **UI (optional):** Next.js in `web/` per [`PLAN_UI.md`](PLAN_UI.md); shared SQLite events; **no FastAPI**
 
 ### How teammates start
 
@@ -297,15 +315,20 @@ cd examples/blinky_sv && uv run shepherd upload
 
 ```text
 PLAN.md
+PLAN_UI.md                  # Next.js UI + shared SQLite events (no FastAPI)
 README.md
 pyproject.toml              # uv-managed; depends on apio (backend)
 uv.lock
 .env.example
+web/                        # optional Next.js UI (see PLAN_UI.md)
 src/shepherd/
   __init__.py
   cli.py
   config.py                 # shepherd.toml read/write
-  runs.py                   # run records
+  runs.py                   # run records (files)
+  events/
+    db.py                   # SQLite events DB writers (shared with UI)
+    schema.sql
   llm/client.py
   backend/
     base.py                 # Backend protocol (only interface the rest of Shepherd uses)
@@ -360,6 +383,7 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 - Windows polish
 - Auto-applying AI fixes without confirmation
 - Claiming functional correctness — Shepherd checks build/program health; behavior is the user’s testbench’s job (`shepherd test` runs it)
+- **FastAPI** (or any HTTP job API) between Shepherd and the UI for the demo — use the shared SQLite events DB instead (see [`PLAN_UI.md`](PLAN_UI.md))
 
 ## Hackathon demo script
 
@@ -369,17 +393,19 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 4. Amaranth project → `shepherd upload` → emitted Verilog → board blinks / UART prints
 5. A nextpnr failure with an unknown signature → `shepherd explain` → Meta Llama (**LLM**) diagnosis next to the raw log
 6. (Optional, for judges) `--show-backend` to reveal the apio + toolchain commands underneath
+7. (Optional UI) open Next.js Run view while CLI builds — same events from SQLite (see [`PLAN_UI.md`](PLAN_UI.md))
 
 ## Implementation order
 
-1. Update `**PLAN.md**` (this document)
+1. Update `**PLAN.md**` / [`PLAN_UI.md`](PLAN_UI.md) (these documents)
 2. Scaffold package with `uv` (`pyproject.toml`, `uv.lock`, CLI, `.env.example`); `uv add apio`
-3. `backend/base.py` + `backend/apio/` (runner, staging project generation, board resolution) + `runs.py`; `build` / `upload` with log capture
+3. `backend/base.py` + `backend/apio/` (runner, staging project generation, board resolution) + `runs.py` + **`events/` SQLite writers**; `build` / `upload` with log capture
 4. `backend/apio/translate.py` + error signature DB + VerifyAgent (deterministic, then LLM) + `shepherd explain`
 5. DoctorAgent + `doctor --fix`
 6. HDL adapters: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
 7. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
 8. Smoke test: `doctor` → `init` → `build` → `upload` on hardware; `--no-ai`, `--json`, `--show-backend` paths; grep user-facing output for “apio” leaks
+9. (Optional) Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) — poll SQLite, spawn CLI; no FastAPI
 
 ## Success criteria
 
@@ -390,3 +416,4 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 - `shepherd doctor` gets a fresh macOS/Linux machine from nothing to a programmed board with only confirmations
 - `--no-ai` works for everything except explanations
 - Swapping or upgrading the backend touches only `backend/`; adding an HDL adapter or error signature needs no core changes
+- Demo UI (if used) reads the same SQLite event stream Shepherd writes — **no FastAPI** in the path
