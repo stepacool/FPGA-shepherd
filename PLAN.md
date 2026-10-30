@@ -206,8 +206,9 @@ src/shepherd/
     project_fs.py
     fpga_build.py
     fpga_program.py
-    board_tangnano9k.py   # pin / constraint helpers
     verify_logs.py        # parse/summarize toolchain + loader logs
+  lib/
+    board_tangnano9k.py   # pin / constraint helpers (not agent tools)
   knowledge/
     tangnano9k.md         # board facts for Guide/Design prompts
   config.py
@@ -236,7 +237,7 @@ docs/extending.md
 
 - Stable **Tool** protocol: name, JSON schema, `run(**kwargs) -> ToolResult`
 - Stable **Agent** protocol: `name`, `system_prompt`, `tools`, `run(goal, context) -> AgentResult`
-- Later boards = new entry in `boards.yaml` + optional `knowledge/` + `board_*.py`
+- Later boards = new entry in `boards.yaml` + optional `knowledge/` + `lib/board_*.py`
 - Example stub in docs (e.g. `SimAgent` / UART listen)
 
 ## Out of scope for v0
