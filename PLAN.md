@@ -73,7 +73,7 @@ A small **Python CLI package** (`fpga-shepherd`, command `shepherd`):
 - Uses `**uv**` for its own env; **apio is a pinned dependency** of the package (`uv add apio`), installed automatically with Shepherd — the user never installs it separately
 - Machine-readable output (`--json`) for **continuous integration (CI)** and editor integrations
 - Extensible: new HDL adapter / error signature / agent / backend = new module + registration
-- Optional web UI is specified in [`PLAN_UI.md`](PLAN_UI.md). **Postgres is the wire**: Next.js (UI + endpoints the CLI calls; Vercel or localhost) and the Python job processor (`shepherd worker`, on the laptop with the board) both read/write one DB (local Postgres or Neon) and never call each other. **No FastAPI**. Without a server configured, the CLI runs everything locally
+- Optional web UI is specified in [`PLAN_UI.md`](PLAN_UI.md). **Demo integration is a shared SQLite events DB** — Shepherd writes events; the UI reads them. **No FastAPI** (or other HTTP job API) between them
 
 ## Primary flow
 
@@ -256,24 +256,21 @@ Every run writes `.shepherd/runs/<timestamp>/` (`run.json` + per-step logs):
 
 `shepherd explain` and `shepherd ask` read the latest run record.
 
-### Server mode: Postgres is the wire (CLI + UI)
+### Shared events DB (CLI + UI)
 
-For the hackathon demo (and optional Next.js UI), Shepherd can run as two services that share one **Postgres** DB (local for dev, **Neon** free tier when hosted) and never call each other. Endpoints, schema, worker, hosting and budget details are in [`PLAN_UI.md`](PLAN_UI.md).
+For the hackathon demo (and optional Next.js UI), every run also appends to a **SQLite** database at `.shepherd/shepherd.db` (schema and polling details in [`PLAN_UI.md`](PLAN_UI.md)).
 
 ```text
-shepherd CLI ──HTTPS──► Next.js (UI + /api) ──insert jobs / read events──► Postgres
-browser ──────────────► (localhost or Vercel)                                ▲
-                                                                             │ claim jobs / write events + results
-                                                     shepherd worker (laptop + board)
+shepherd CLI ──write──► SQLite events DB ◄──read── Next.js UI
+                 ▲
+                 └── same machine, no FastAPI in between
 ```
 
 Rules:
 
-- **Local mode** (default, `SHEPHERD_SERVER_URL` unset): commands run in-process; `.shepherd/runs/` files only; no server, no DB
-- **Server mode** (`SHEPHERD_SERVER_URL` set): the CLI submits the command as a job to Next.js and streams its events back; `shepherd worker` on the board laptop claims it from the DB, runs it, and writes events + result
-- Local mode and the worker run the same command code (`src/shepherd/jobs/`). Interactive commands (`doctor --fix`, `init`) stay local-only in v0
-- File logs under `.shepherd/runs/` remain on the worker laptop; the DB holds the live event stream + results
-- **Do not** add FastAPI or any direct Next.js ↔ Python call: the DB is the only link
+- File logs under `.shepherd/runs/` remain; the DB is the **live event stream** both sides share
+- Python owns writes (migrations + append). The UI only reads (and may spawn `uv run shepherd …` to start work)
+- **Do not** add a FastAPI/Express bridge for the demo — keep the path dumb and local
 
 ## CLI
 
@@ -287,7 +284,6 @@ Rules:
 | `shepherd check --stage …` | VerifyAgent on the last run |
 | `shepherd explain [LOG]` | Diagnose last failure or any log |
 | `shepherd ask "…"` | Optional Q&A with project + last run as context |
-| `shepherd worker` | Optional job processor for server mode: claims jobs from the DB, runs them, writes events + results (see [`PLAN_UI.md`](PLAN_UI.md)) |
 
 Global flags: `--no-ai`, `--no-check`, `--json`, `--dry-run` (print underlying commands only), `--show-backend`, `-v` (stream raw toolchain output).
 
@@ -303,7 +299,7 @@ Advanced / hidden: `shepherd backend -- <args>` (see Backend layer).
 - **Operating system (OS)**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
 - **Credit**: README acknowledges apio as the build backend and we respect its license — hidden from the workflow, not from the **user experience (UX)** of the normal flow
-- **UI (optional):** Next.js in `web/` on Vercel Hobby per [`PLAN_UI.md`](PLAN_UI.md); Postgres (Neon Free or local) is the wire between Next.js (UI + CLI endpoints) and `shepherd worker`; **no FastAPI**
+- **UI (optional):** Next.js in `web/` per [`PLAN_UI.md`](PLAN_UI.md); shared SQLite events; **no FastAPI**
 
 ### How teammates start
 
@@ -319,23 +315,20 @@ cd examples/blinky_sv && uv run shepherd upload
 
 ```text
 PLAN.md
-PLAN_UI.md                  # Next.js UI + CLI endpoints, Postgres wire, worker, hosting (no FastAPI)
+PLAN_UI.md                  # Next.js UI + shared SQLite events (no FastAPI)
 README.md
 pyproject.toml              # uv-managed; depends on apio (backend)
 uv.lock
 .env.example
-db/migrations/              # shared schema between Next.js and the worker (see PLAN_UI.md)
-web/                        # optional Next.js UI + CLI endpoints (see PLAN_UI.md)
+web/                        # optional Next.js UI (see PLAN_UI.md)
 src/shepherd/
   __init__.py
   cli.py
   config.py                 # shepherd.toml read/write
   runs.py                   # run records (files)
-  jobs/                     # command implementations shared by local mode and the worker
-    model.py                # job / event shapes (mirrored in web/src/lib/types.ts)
-  server_client.py          # CLI server mode: httpx client for the Next.js endpoints
-  worker.py                 # optional `shepherd worker`: job processor (Postgres)
-  db.py                     # psycopg queries used by the worker
+  events/
+    db.py                   # SQLite events DB writers (shared with UI)
+    schema.sql
   llm/client.py
   backend/
     base.py                 # Backend protocol (only interface the rest of Shepherd uses)
@@ -390,7 +383,7 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 - Windows polish
 - Auto-applying AI fixes without confirmation
 - Claiming functional correctness — Shepherd checks build/program health; behavior is the user’s testbench’s job (`shepherd test` runs it)
-- **FastAPI** or any direct call between Next.js and Python: the shared Postgres DB is the only link (see [`PLAN_UI.md`](PLAN_UI.md))
+- **FastAPI** (or any HTTP job API) between Shepherd and the UI for the demo — use the shared SQLite events DB instead (see [`PLAN_UI.md`](PLAN_UI.md))
 
 ## Hackathon demo script
 
@@ -400,19 +393,19 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 4. Amaranth project → `shepherd upload` → emitted Verilog → board blinks / UART prints
 5. A nextpnr failure with an unknown signature → `shepherd explain` → Meta Llama (**LLM**) diagnosis next to the raw log
 6. (Optional, for judges) `--show-backend` to reveal the apio + toolchain commands underneath
-7. (Optional UI) open Next.js Run view while CLI builds — same job events from the DB (see [`PLAN_UI.md`](PLAN_UI.md))
+7. (Optional UI) open Next.js Run view while CLI builds — same events from SQLite (see [`PLAN_UI.md`](PLAN_UI.md))
 
 ## Implementation order
 
 1. Update `**PLAN.md**` / [`PLAN_UI.md`](PLAN_UI.md) (these documents)
 2. Scaffold package with `uv` (`pyproject.toml`, `uv.lock`, CLI, `.env.example`); `uv add apio`
-3. `backend/base.py` + `backend/apio/` (runner, staging project generation, board resolution) + `runs.py` + **command bodies in `jobs/`** (shared by local mode and the later worker); `build` / `upload` with log capture
+3. `backend/base.py` + `backend/apio/` (runner, staging project generation, board resolution) + `runs.py` + **`events/` SQLite writers**; `build` / `upload` with log capture
 4. `backend/apio/translate.py` + error signature DB + VerifyAgent (deterministic, then LLM) + `shepherd explain`
 5. DoctorAgent + `doctor --fix`
 6. HDL adapters: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
 7. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
 8. Smoke test: `doctor` → `init` → `build` → `upload` on hardware; `--no-ai`, `--json`, `--show-backend` paths; grep user-facing output for “apio” leaks
-9. (Optional) Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) (UI + CLI endpoints), `db/migrations`, `shepherd worker`, CLI server mode; no FastAPI
+9. (Optional) Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) — poll SQLite, spawn CLI; no FastAPI
 
 ## Success criteria
 
@@ -423,4 +416,4 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 - `shepherd doctor` gets a fresh macOS/Linux machine from nothing to a programmed board with only confirmations
 - `--no-ai` works for everything except explanations
 - Swapping or upgrading the backend touches only `backend/`; adding an HDL adapter or error signature needs no core changes
-- Demo UI (if used) and CLI server mode show the same job events from the shared DB; Next.js and the worker never call each other, with **no FastAPI** in the path
+- Demo UI (if used) reads the same SQLite event stream Shepherd writes — **no FastAPI** in the path
