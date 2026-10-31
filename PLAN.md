@@ -406,7 +406,7 @@ Help is part of the **CLI-first** milestone: every subcommand ships with usable 
 - **Contributors:** `uv sync` / `uv.lock` in this repo
 - **End users:** one **install script** (e.g. `curl -LsSf …/install.sh | sh`) that: (1) installs **`uv`** if needed, (2) runs **`uv tool install fpga-shepherd`**. After that they only run `shepherd …`. **`shepherd init`** / `doctor --fix` invoke **`uv` internally** for envs/deps and pull apio toolchain packages
 - **Backend**: apio (pinned, `>=1.6,<2`) behind `backend/`; packages pulled during `init` / `doctor --fix`
-- **Install script path (planned):** [`scripts/install.sh`](scripts/install.sh) in this repo (also published via a stable URL for the curl one-liner)
+- **Install script:** [`scripts/install.sh`](scripts/install.sh) (curl one-liner in README). Installs `uv` if needed, then `uv tool install` from this GitHub repo until `fpga-shepherd` is on PyPI
 - **LLM**: Meta Llama via OpenAI-compatible HTTP client behind `llm/client.py`
 - **Agent loop**: lightweight ReAct-style loop per agent; no heavy framework
 - **Run state**: SQLite + step logs; **no `run.json`**
