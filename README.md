@@ -1,44 +1,78 @@
 # FPGA Shepherd
 
-Shepherd speeds up adoption of complex chips like **field-programmable gate arrays (FPGAs)** — so getting real hardware into the loop for **physical AI** is simpler.
+Shepherd speeds up adoption of complex chips like **FPGAs** (field-programmable gate arrays), so getting real hardware into the loop for **physical AI** is simpler.
 
-You bring the design. Shepherd helps with build, board bring-up, and figuring out what went wrong.
+You bring the design. Shepherd helps with setup, build, board bring-up, and figuring out what went wrong.
 
 **v0 board:** Tang Nano 9K only.
 
-## Docs
+## Journey
 
-- [`PLAN.md`](PLAN.md) — product architecture (CLI, apio backend, agents, checkpoints, SQLite events)
-- [`PLAN_UI.md`](PLAN_UI.md) — optional Next.js UI (reads the same SQLite DB; no FastAPI)
+<table>
+  <tr>
+    <td width="10%" align="right" valign="middle"><em>Stage</em></td>
+    <td width="14%" align="center"><b>System setup</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Define project</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Adapt HDL</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Synth / P&amp;R / pack</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Program board</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Debug / diagnose</b></td>
+  </tr>
+  <tr>
+    <td width="10%" align="right" valign="top"><em>Commands</em></td>
+    <td width="14%" align="center" valign="top"><code>install.sh</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd init</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd build</code><br/><em>(adapter step)</em></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd build</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd upload</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd explain</code><br/><code>shepherd ask</code></td>
+  </tr>
+  <tr>
+    <td width="10%" align="right" valign="top"><em>Under the hood</em></td>
+    <td width="14%" align="center" valign="top">uv + shepherd<br/>init → uv · apio pkgs</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd.toml</code><br/>AdoptAgent</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">Verilog/SV passthrough<br/>Amaranth emit</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">apio · Yosys · nextpnr<br/>checkpoints</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">openFPGALoader<br/>Tang Nano 9K</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">VerifyAgent · signatures<br/>Meta Llama</td>
+  </tr>
+</table>
 
-## How it works (short)
+If something fails in debug, fix the design and retry from adapt.
 
-- **Shepherd** is the interface: `shepherd.toml`, Shepherd commands, Shepherd verdicts
-- Under the hood it drives **[apio](https://fpgawars.github.io/apio/docs)** (toolchain, boards, synth / place-and-route / program). Default UX hides apio; power users can use `--show-backend`
-- Run state: **SQLite** (`.shepherd/shepherd.db`) + per-step logs — **no `run.json`**
-- Optional web UI polls that DB and can spawn `shepherd … --yes` (cancel via process id)
+## How to use
 
-## Status
-
-Planning / early scaffolding. Implementation order is **CLI first**, then UI.
-
-## Intended quickstart (once implemented)
-
-We use **`uv` only** (never `pip`). End users don’t hand-manage envs — **`shepherd init` runs `uv` internally**:
+Not released yet. When it is:
 
 ```bash
-uv tool install fpga-shepherd   # once — installs the `shepherd` CLI via uv
+curl -LsSf https://raw.githubusercontent.com/FrankP89/FPGA-shepherd/main/scripts/install.sh | sh
+
 cd my-fpga-project
-shepherd init                   # project + deps (uv + toolchain; may need internet)
+shepherd init
 shepherd upload
 ```
 
-Optional: set `META_API_KEY` for AI explain/ask. Repair path: `shepherd doctor --fix`.
+If the board or toolchain looks wrong: `shepherd doctor --fix`.
 
-Contributors in this repo: `uv sync` / `uv run` — see [`PLAN.md`](PLAN.md).
+For AI-assisted `explain` / `ask`, set `META_API_KEY`.
 
-UI (after CLI works): see [`PLAN_UI.md`](PLAN_UI.md).
+## Status
 
-## Credit
+Planning / early scaffolding. CLI first, then an optional UI.
 
-Build backend: [apio](https://fpgawars.github.io/apio/docs) (FPGAwars). We respect its license and credit it in docs; it is an implementation detail of the default workflow, not something users must install or learn separately.
+Build backend: [apio](https://fpgawars.github.io/apio/docs) (FPGAwars). You don’t need to install or learn it separately.

@@ -40,7 +40,7 @@ Ship a **hackathon-ready tool** that speeds up adoption of complex chips like **
 
 What Shepherd gives the user:
 
-1. **Zero-friction bootstrap** — after a one-time Shepherd CLI install, **`shepherd init`** sets up the project **and** installs dependencies via **`uv` internally** (plus apio packages) — users never run `pip` or hand-roll package installs
+1. **Zero-friction bootstrap** — one small **install script** puts Shepherd on PATH (`uv` + `uv tool install` under the hood); then **`shepherd init`** sets up the project **and** installs dependencies via **`uv` internally** (plus apio packages) — users never run `pip` or hand-roll package installs
 2. **Right hardware description language (HDL) adapter for your design** — Verilog/SystemVerilog (**SV**) build directly; Amaranth (and later **VHDL**, SpinalHDL, Chisel) are elaborated to Verilog first
 3. **Failure diagnosis** — Yosys / nextpnr / openFPGALoader output turned into a cause + concrete fix (Meta Llama, after deterministic matchers)
 4. **Environment fixing** — toolchain, drivers, udev, **Universal Serial Bus (USB)** detection; `init` first, `doctor --fix` to repair
@@ -52,6 +52,60 @@ What Shepherd gives the user:
 ## Pitch
 
 > Shepherd speeds up FPGA adoption so physical AI is easier to build on real hardware — you bring the design; `shepherd init` sets up deps; we simplify build, board bring-up, and fixing failures.
+
+## User journey and stack
+
+Same schematic as [`README.md`](README.md).
+
+<table>
+  <tr>
+    <td width="10%" align="right" valign="middle"><em>Stage</em></td>
+    <td width="14%" align="center"><b>System setup</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Define project</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Adapt HDL</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Synth / P&amp;R / pack</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Program board</b></td>
+    <td width="2%" align="center"><b>→</b></td>
+    <td width="14%" align="center"><b>Debug / diagnose</b></td>
+  </tr>
+  <tr>
+    <td width="10%" align="right" valign="top"><em>Commands</em></td>
+    <td width="14%" align="center" valign="top"><code>install.sh</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd init</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd build</code><br/><em>(adapter step)</em></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd build</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd upload</code></td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd explain</code><br/><code>shepherd ask</code></td>
+  </tr>
+  <tr>
+    <td width="10%" align="right" valign="top"><em>Under the hood</em></td>
+    <td width="14%" align="center" valign="top">uv + shepherd<br/>init → uv · apio pkgs</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top"><code>shepherd.toml</code><br/>AdoptAgent</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">Verilog/SV passthrough<br/>Amaranth emit</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">apio · Yosys · nextpnr<br/>checkpoints</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">openFPGALoader<br/>Tang Nano 9K</td>
+    <td width="2%"></td>
+    <td width="14%" align="center" valign="top">VerifyAgent · signatures<br/>Meta Llama</td>
+  </tr>
+</table>
+
+**Retry:** Debug **⇢** Adapt (fix and retry)
+
+- Build path is deterministic; **Meta Llama** is for diagnosis / `explain` / `ask`, not for picking synth flags
+- CLI first; UI later observes the same journey via SQLite events
 
 ## Design principles
 
@@ -66,7 +120,7 @@ What Shepherd gives the user:
 - **Never mutate the user’s project without consent.** AI-proposed edits (`.cst` constraint files, `shepherd.toml`, source) are shown as diffs and applied only on confirmation; UI spawns use `--yes` / non-interactive mode so prompts never hang a subprocess
 - **Works offline where possible.** `--no-ai` skips explanations; when the network is required (first toolchain install, LLM call), Shepherd prints a **clear, simple error** naming what needs internet — never a raw stack trace
 - **CLI first.** Ship `doctor` / `init` / `build` / `upload` + SQLite events + checkers before the Next.js UI ([`PLAN_UI.md`](PLAN_UI.md))
-- **`uv` only — never `pip` / `pipx`.** Shepherd uses **`uv` internally** for environments and dependency installs. End users do not run `uv sync` / `uv add` by hand; after the CLI is on their PATH, **`shepherd init` bootstraps everything** (including calling `uv` under the hood where needed, plus apio packages/drivers). Contributors use `uv` in this repo as usual
+- **`uv` only — never `pip` / `pipx`.** End users install Shepherd via a **small install script** (installs `uv` if missing, then `uv tool install fpga-shepherd`). They do not run `uv sync` / `uv add` by hand. After that, **`shepherd init` bootstraps everything** (calling `uv` under the hood where needed, plus apio packages/drivers). Contributors use `uv` in this repo as usual
 
 ## Product shape
 
@@ -320,6 +374,7 @@ No traceback as the primary UX.
 
 | Command | Does |
 | --- | --- |
+| `shepherd --help` / `-h` / `shepherd help` | **Built-in help:** top-level usage, subcommands, global flags (Shepherd terms only — no apio leak). `shepherd <cmd> --help` for per-command help |
 | `shepherd doctor [--fix]` | Env + toolchain + drivers + devices checklist; `--fix` proposes/runs fixes with confirmation (repair path) |
 | `shepherd init [PATH]` | **Primary setup:** write/adopt `shepherd.toml`, then **install/verify deps via `uv` (internal) + apio packages**, driver guidance — no `pip`, no manual `uv sync` |
 | `shepherd build` | HDL adapter → build → verify |
@@ -329,17 +384,20 @@ No traceback as the primary UX.
 | `shepherd explain [LOG]` | Diagnose last failure or any log |
 | `shepherd ask "…"` | Optional Q&A with project + last run as context |
 
-Global flags: `--no-ai`, `--no-check`, `--yes` (non-interactive; required for UI spawns), `--json`, `--dry-run`, `--show-backend`, `-v`.
+Global flags: `--no-ai`, `--no-check`, `--yes` (non-interactive; required for UI spawns), `--json`, `--dry-run`, `--show-backend`, `-v`, **`--help` / `-h`**.
 
 Advanced: `shepherd backend -- <args>` (see Backend layer).
+
+Help is part of the **CLI-first** milestone: every subcommand ships with usable `--help` before UI work starts.
 
 ## Default technical decisions
 
 - **Language**: Python 3.11+
 - **Package manager:** **`uv` only** — never document or call `pip` / `pipx`
 - **Contributors:** `uv sync` / `uv.lock` in this repo
-- **End users:** put `shepherd` on PATH once with **`uv tool install fpga-shepherd`** (or an install script that wraps the same). After that they only run `shepherd …`. **`shepherd init`** / `doctor --fix` invoke **`uv` internally** for envs/deps and pull apio toolchain packages
+- **End users:** one **install script** (e.g. `curl -LsSf …/install.sh | sh`) that: (1) installs **`uv`** if needed, (2) runs **`uv tool install fpga-shepherd`**. After that they only run `shepherd …`. **`shepherd init`** / `doctor --fix` invoke **`uv` internally** for envs/deps and pull apio toolchain packages
 - **Backend**: apio (pinned, `>=1.6,<2`) behind `backend/`; packages pulled during `init` / `doctor --fix`
+- **Install script path (planned):** [`scripts/install.sh`](scripts/install.sh) in this repo (also published via a stable URL for the curl one-liner)
 - **LLM**: Meta Llama via OpenAI-compatible HTTP client behind `llm/client.py`
 - **Agent loop**: lightweight ReAct-style loop per agent; no heavy framework
 - **Run state**: SQLite + step logs; **no `run.json`**
@@ -351,8 +409,8 @@ Advanced: `shepherd backend -- <args>` (see Backend layer).
 ### How end users start
 
 ```bash
-# once: install the Shepherd CLI (uv under the hood — never pip)
-uv tool install fpga-shepherd
+# once: install script → uv (if needed) + uv tool install fpga-shepherd
+curl -LsSf https://raw.githubusercontent.com/FrankP89/FPGA-shepherd/main/scripts/install.sh | sh
 
 cd my-fpga-project                  # or an empty folder
 shepherd init                       # uv + apio deps installed internally
@@ -377,6 +435,8 @@ uv run shepherd upload --project examples/blinky_sv
 PLAN.md
 PLAN_UI.md                  # Next.js UI + shared SQLite events (no FastAPI)
 README.md
+scripts/
+  install.sh                # end-user: install uv if needed + uv tool install fpga-shepherd
 pyproject.toml              # uv-managed; depends on apio (backend)
 uv.lock
 .env.example
@@ -451,7 +511,7 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 
 ## Hackathon demo script
 
-1. Fresh machine: `uv tool install fpga-shepherd` → `shepherd init` (uses `uv` internally + apio packages; internet may be required; clear error if offline)
+1. Fresh machine: install script (`uv` + `uv tool install`) → `shepherd init` (uses `uv` internally + apio packages; internet may be required; clear error if offline)
 2. Existing SV repo: `shepherd init` → detected top + board → `shepherd.toml` → deps ready → builds
 3. `examples/broken/` with a bad constraint / unconstrained port → P&R fails → `shepherd explain` proposes a fix diff
 4. Amaranth project → `shepherd upload` → emitted Verilog → board blinks / UART prints
@@ -469,13 +529,14 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 6. DoctorAgent + `doctor --fix`
 7. HDL adapters: Verilog/SV passthrough (SV subset checkpoint), Amaranth; AdoptAgent + `shepherd init`
 8. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
-9. Smoke test CLI: `doctor` → `init` → `build` → `upload`; `--no-ai`, `--yes`, `--json`, `--show-backend`; no “apio” leaks in default UX
+9. Smoke test CLI: `shepherd --help` / `shepherd help` / per-command `--help`; `doctor` → `init` → `build` → `upload`; `--no-ai`, `--yes`, `--json`, `--show-backend`; no “apio” leaks in default UX (including help text)
 10. **Then** Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) — poll SQLite, spawn CLI with PID cancel; no FastAPI
 
 ## Success criteria
 
 - A user goes from clone to a programmed Tang Nano 9K using Shepherd commands; default UX never requires typing `apio` (power users have `--show-backend`)
 - Experienced user runs `shepherd init` + `shepherd build` / `upload`; the only project file they touch is `shepherd.toml`; they never run `pip` / `uv sync` by hand (`uv` runs inside Shepherd)
+- `shepherd --help`, `-h`, and `shepherd help` work; `shepherd <cmd> --help` documents each command in Shepherd terms
 - Every stage has a checkpoint; failures stop early with a clear step + log pointer
 - Run state lives in SQLite + logs only (no `run.json` dual write)
 - Network failures show a short “internet required for …” message
