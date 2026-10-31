@@ -1,0 +1,7 @@
+Using env default (sipeed-tang-nano-9k)
+Setting shell vars.
+--------------------------------------------------------------------------------
+yosys -p "synth_gowin -top blinky -json _build/default/hardware.json " -q -DSYNTHESIZE blinky.v
+blinky.v:36: ERROR: syntax error, unexpected TOK_END
+scons: *** [_build/default/hardware.json] Error 1
+========================== [ERROR] Took 0.14 seconds ===========================
