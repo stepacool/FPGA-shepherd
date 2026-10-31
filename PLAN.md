@@ -34,7 +34,7 @@ Defined once here; used abbreviated afterward in this document.
 
 ## Goal
 
-Ship a **hackathon-ready devkit** for people who already write **register-transfer level (RTL)** designs: they bring their own design, Shepherd takes care of the annoying parts around it.
+Ship a **hackathon-ready tool** that speeds up adoption of complex chips like **field-programmable gate arrays (FPGAs)**, with the intention of simplifying the process of **physical AI** — getting real hardware into the loop without drowning in toolchain pain.
 
 **Shepherd is the interface.** Users learn Shepherd’s commands, Shepherd’s project file and Shepherd’s output — nothing else. Under the hood, Shepherd drives **[apio](https://fpgawars.github.io/apio/docs)** as its build backend (toolchain install, board definitions, synthesis / **place and route (P&R)** / pack / program). apio is an implementation detail: users never need to know it exists, install it, run it, or edit its files.
 
@@ -45,12 +45,12 @@ What Shepherd gives the user:
 3. **Environment fixing** — toolchain, drivers, udev, **Universal Serial Bus (USB)** detection; Shepherd proposes the exact fix and runs it with the user’s OK
 4. **Project adoption** — point Shepherd at an existing repo; it detects HDL, top module, sources and constraints and writes `shepherd.toml`
 
-**Audience:** competent **field-programmable gate array (FPGA)** / digital-design engineers. Not a “describe your idea in English” app builder.
+**Audience:** people putting FPGAs (and similar chips) to work for physical AI and embedded systems — including digital-design engineers. You bring the design; Shepherd simplifies build, flash, and diagnosis.
 **v0 board support: Tang Nano 9K only.** Board/part/programmer facts come from the backend (apio) — Shepherd does not ship board or pin **YAML** registries.
 
 ## Pitch
 
-> You write the RTL — in whatever HDL you use. Shepherd picks the right HDL adapter, builds and flashes your board, and when something breaks it tells you why and how to fix it.
+> Shepherd speeds up FPGA adoption so physical AI is easier to build on real hardware — you bring the design; we simplify build, board bring-up, and fixing failures.
 
 ## Design principles
 
@@ -423,7 +423,7 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 - Re-implementing anything the backend does (toolchain install, synth/P&R, programming, board/pin databases)
 - Exposing apio to users (commands, `apio.ini`, terminology) in the normal workflow
 - Shepherd-owned **build-time** pin/board registry (diagnosis-only pin-facts + datasheets are in scope)
-- Natural-language → design scaffolding (out of scope; this is an engineer tool, not an app builder)
+- Natural-language → full design scaffolding (out of scope for v0; focus is simplifying FPGA bring-up for physical AI, not inventing RTL from a prompt)
 - Boards other than Tang Nano 9K
 - Additional backends (e.g. Gowin vendor **electronic design automation (EDA)**) — the protocol allows it later
 - Windows polish

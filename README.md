@@ -1,10 +1,8 @@
 # FPGA Shepherd
 
-**AI-assisted FPGA / digital-design engineer tool** for people who already write **register-transfer level (RTL)**. You bring the design; Shepherd handles adapters, toolchain plumbing, build/upload, and failure diagnosis.
+Shepherd speeds up adoption of complex chips like **field-programmable gate arrays (FPGAs)** — so getting real hardware into the loop for **physical AI** is simpler.
 
-> You write the RTL — in whatever **hardware description language (HDL)** you use. Shepherd picks the right HDL adapter, builds and flashes your board, and when something breaks it tells you why and how to fix it.
-
-**Not** a “describe an app in English and we invent the design” product. Audience: competent FPGA engineers.
+You bring the design. Shepherd helps with build, board bring-up, and figuring out what went wrong.
 
 **v0 board:** Tang Nano 9K only.
 

@@ -4,7 +4,7 @@ Companion to [`PLAN.md`](PLAN.md). This document covers the optional **web user 
 
 ## Goal
 
-A light **Next.js** UI that shows Shepherd runs live: steps, verdicts, logs, ask/explain, and (later) waveforms — without inventing a second backend.
+A light **Next.js** UI that shows Shepherd runs live: steps, verdicts, logs, ask/explain, and (later) waveforms — without inventing a second backend. Same product goal as [`PLAN.md`](PLAN.md): speed up FPGA adoption for physical AI.
 
 **Demo rule:** no FastAPI (or other **application programming interface (API)** server) between Python and the UI. Shepherd and the UI both talk to a shared **SQLite** events database (**DB**).
 
