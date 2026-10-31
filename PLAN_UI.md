@@ -8,6 +8,7 @@ A light **Next.js** UI that shows Shepherd runs live: steps, verdicts, logs, ask
 
 **Demo rule:** no FastAPI (or other **application programming interface (API)** server) between Python and the UI. Shepherd and the UI both talk to a shared **SQLite** events database (**DB**).
 
+**Build order:** the **CLI ships first** ([`PLAN.md`](PLAN.md) — doctor/init/build/upload + SQLite writers + checkpoint checkers). UI work starts only after that is solid.
 ## Acronyms
 
 Same glossary as [`PLAN.md`](PLAN.md). Extra for this file:
@@ -30,12 +31,11 @@ flowchart LR
   UI -->|spawn_shepherd_CLI| CLI
 ```
 
-- **Shepherd (Python)** is still the only thing that runs builds, uploads, adapters, and AI diagnosis. Every meaningful step appends rows to the shared events DB (and keeps `.shepherd/runs/` files as today).
-- **Next.js** reads those rows for the live run view. To *start* a command, the UI spawns `uv run shepherd …` as a subprocess (or queues a row that a tiny local watcher runs — spawn is enough for the hackathon).
+- **Shepherd (Python)** is still the only thing that runs builds, uploads, adapters, and AI diagnosis. Every meaningful step appends rows to the shared events DB and writes per-step logs under `.shepherd/runs/<run_id>/` (**no `run.json`**).
+- **Next.js** reads those rows for the live run view. To *start* a command, the UI spawns `uv run shepherd … --yes` as a subprocess.
 - **No FastAPI**, no separate HTTP job API, no duplicate toolchain logic in Node.
 
 Why SQLite: one file, works from Python and from Next.js (server-side), zero deploy complexity for a laptop demo.
-
 ## Shared events DB
 
 **Path (default):** `.shepherd/shepherd.db` in the project being worked on (or a path in `shepherd.toml` / env for multi-project demos).
@@ -51,6 +51,8 @@ CREATE TABLE runs (
   project_path  TEXT NOT NULL,
   command       TEXT NOT NULL,      -- build | upload | doctor | …
   board         TEXT,
+  pid           INTEGER,            -- OS process id of shepherd (for Cancel)
+  pgid          INTEGER,            -- process group id when available
   started_at    TEXT NOT NULL,
   finished_at   TEXT,
   verdict       TEXT,               -- pass | warn | fail | null while running
@@ -89,9 +91,11 @@ Optional later: `command_requests` table if we want the UI to enqueue work witho
 | App | Next.js (App Router) | Familiar, fast to ship UI |
 | Language | TypeScript | Safer for a team hackathon |
 | Styling | One small system (e.g. CSS modules or Tailwind) | Don’t over-design |
-| DB access | `better-sqlite3` (or equivalent) **only in Server Components / Route Handlers / Server Actions** | “Read DB directly” without a Python HTTP layer |
+| DB access | `better-sqlite3` (or equivalent) **only in Server Components / Route Handlers / Server Actions** | “Read DB directly” without a Python HTTP layer — see Next.js + SQLite notes below |
 | Live updates | Poll events every ~200–500 ms while a run is active | Demo-simple |
 | Charts / scope | See Waveforms below | Don’t pull heavy dashboards |
+
+Optional toggle: **Show backend commands** (`--show-backend` equivalent) — first-class Advanced control for judges/power users.
 
 ## What we show in the UI
 
@@ -107,8 +111,6 @@ Think of the UI as a **control room for Shepherd**, not a full IDE and not a sec
 | **Explain** | Last failure cause + proposed fix (Shepherd terms); optional “apply diff?” confirmation later | `events` kind `verdict` / ask payloads + log paths |
 | **Ask** | Simple prompt box; answer streamed/written as events | spawn `shepherd ask "…"` → events |
 | **Artifacts** | Clickable list: log files, bitstream `.fs`, emitted Verilog, sim **VCD** (when present) | `artifact` events with **file paths** (not file blobs in the DB) |
-
-Optional toggle: **Show backend commands** — reveals underlying tool lines for judges; default off.
 
 ### Screens (v0.5 — waveforms)
 
@@ -152,12 +154,36 @@ Artifacts: pnr.log  |  (no bitstream)
 
 Server Action / Route Handler:
 
-1. Insert or prepare run context if needed  
-2. `spawn('uv', ['run', 'shepherd', 'build'], { cwd: projectPath })`  
-3. Shepherd itself creates the `runs` row and streams `events`  
-4. UI polls until `runs.finished_at` is set  
+1. Allocate or let Shepherd create `run_id`  
+2. Spawn with a **new process group**, non-interactive flags:
 
-Do **not** reimplement build in Node. Do **not** call apio from the UI.
+```text
+uv run shepherd build --yes --run-id <id>
+  cwd = projectPath
+  detached process group (POSIX: start new session / setpgid)
+```
+
+3. Persist `pid` / `pgid` on the `runs` row and in `.shepherd/runs/<run_id>/pid`  
+4. UI polls events until `runs.finished_at` is set  
+5. **Cancel:** `kill(-pgid, SIGTERM)` then `SIGKILL` if needed; clear the one-run lock  
+
+Rules:
+
+- Always pass `--yes` (and never attach a TTY) so `[y/N]` prompts cannot hang the child  
+- **One active run per project** (lock file or `finished_at IS NULL` guard)  
+- Do **not** reimplement build in Node; do **not** call apio from the UI  
+
+## Next.js + SQLite (friction to expect)
+
+`better-sqlite3` is a **native Node addon**. Next.js / Turbopack / Edge can break it if misconfigured.
+
+Rules:
+
+- Import DB helpers only from Server Components, Route Handlers, or Server Actions; mark with `server-only`  
+- Set `serverExternalPackages: ['better-sqlite3']` (or equivalent) in Next config  
+- Open the DB with an **absolute path** to `<project>/.shepherd/shepherd.db`  
+- Use the **Node.js** runtime, not Edge  
+- **Fallback** if native bindings fight the toolchain: `uv run shepherd events dump --after <id>` (still no FastAPI). Default remains direct SQLite  
 
 ## Waveforms (“oscilloscope”) — yes, we can show them
 
@@ -229,15 +255,16 @@ src/shepherd/
 
 ## Implementation order (UI)
 
-1. Agree schema; implement `src/shepherd/events/` writers alongside existing run records  
-2. Scaffold `web/` Next.js app; read-only Run page polling SQLite  
-3. Spawn `shepherd build` / `doctor` from UI  
-4. Explain/Ask surfaces  
-5. Optional: Surfer embed for sim artifacts  
+0. **Blocked on CLI:** events DB writers, step logs, PID file, `--yes`, checkpoint checkers must exist first ([`PLAN.md`](PLAN.md))  
+1. Scaffold `web/` Next.js app with SQLite server-only access; read-only Run page polling  
+2. Spawn `shepherd build` / `doctor` with PID/pgid cancel + one-run lock  
+3. Explain/Ask surfaces; Advanced `--show-backend` toggle  
+4. Optional: Surfer embed for sim artifacts  
 
 ## Success criteria (UI)
 
 - Demo laptop: run Shepherd from CLI **or** UI; same events appear in the Run view from the DB  
-- No FastAPI process in the demo script  
-- Judges can follow synth → P&R → verdict without reading raw apio commands  
+- Cancel stops the Shepherd process group via stored PID/pgid  
+- No FastAPI process in the demo script; no `run.json` dual store  
+- Judges can follow synth → P&R → verdict without reading raw apio commands (unless Advanced is on)  
 - Adding waveform view later does not require changing the event bus shape (artifact events already exist)

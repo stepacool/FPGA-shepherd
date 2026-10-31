@@ -59,10 +59,12 @@ What Shepherd gives the user:
 - **The backend does the toolchain and board work.** Shepherd never re-implements synthesis, P&R, packing, programming, or board/pin databases. Bugs or missing boards in apio go upstream, not into Shepherd
 - **Drive the apio CLI, don’t import its internals.** apio is called as a subprocess; its Python internals are not a stable **application programming interface (API)**. Version pinned and checked by `doctor`
 - **Translate, don’t leak.** apio’s own messages and hints (e.g. “run `apio drivers …`”) are rewritten into Shepherd terms (“run `shepherd doctor --fix`”). Raw *toolchain* logs (Yosys, nextpnr, openFPGALoader) stay available because experienced users want them — those are the tools, not the backend
-- **Transparent on request.** `-v` streams raw toolchain output; `--show-backend` / `--dry-run` print the exact underlying commands. Default output is Shepherd’s steps + verdict
+- **Transparent on request (first-class).** `-v` streams raw toolchain output; **`--show-backend`** / `--dry-run` print the exact underlying commands (also an Advanced toggle in the UI). Default output is Shepherd’s steps + verdict
 - **Deterministic first, artificial intelligence (AI) second.** HDL-adapter choice, flags and known error signatures are plain code. Meta Llama explains, prioritizes and handles the long tail — it never silently picks flags
-- **Never mutate the user’s project without consent.** AI-proposed edits (`.cst` constraint files, `shepherd.toml`, source) are shown as diffs and applied only on confirmation
-- **Works offline.** `--no-ai` runs everything except explanations; deterministic checks still fire
+- **Checkpoint checkers after every stage.** Adapter → synth → P&R → pack → upload → verify each have a loud fail-fast check (including SystemVerilog subset smoke checks)
+- **Never mutate the user’s project without consent.** AI-proposed edits (`.cst` constraint files, `shepherd.toml`, source) are shown as diffs and applied only on confirmation; UI spawns use `--yes` / non-interactive mode so prompts never hang a subprocess
+- **Works offline where possible.** `--no-ai` skips explanations; when the network is required (first toolchain install, LLM call), Shepherd prints a **clear, simple error** naming what needs internet — never a raw stack trace
+- **CLI first.** Ship `doctor` / `init` / `build` / `upload` + SQLite events + checkers before the Next.js UI ([`PLAN_UI.md`](PLAN_UI.md))
 
 ## Product shape
 
@@ -81,9 +83,17 @@ A small **Python CLI package** (`fpga-shepherd`, command `shepherd`):
 flowchart TD
   Cmd[shepherd_build_or_upload] --> Detect[Detect_project_and_HDL]
   Detect --> Adapter[HDL_adapter_emit_Verilog_if_needed]
-  Adapter --> Stage[Generate_backend_project_in_staging]
-  Stage --> Backend[Backend_build_or_upload_apio]
-  Backend --> Match[Known_error_signatures]
+  Adapter --> CheckA[Checkpoint_adapter]
+  CheckA --> Stage[Backend_project_user_paths_or_emit]
+  Stage --> Synth[Backend_synth]
+  Synth --> CheckS[Checkpoint_synth]
+  CheckS --> PnR[Backend_PnR]
+  PnR --> CheckP[Checkpoint_PnR]
+  CheckP --> Pack[Backend_pack]
+  Pack --> CheckK[Checkpoint_pack]
+  CheckK --> Upload[Backend_upload_if_requested]
+  Upload --> CheckU[Checkpoint_upload]
+  CheckU --> Match[Known_error_signatures]
   Match --> Verify[VerifyAgent_verdict]
   Verify --> Report[Verdict_and_fix]
   Report -->|user_OK| Fix[Apply_fix_diff_or_command]
@@ -103,7 +113,7 @@ $ shepherd build
    log:   .shepherd/runs/2026-10-30T14-02-11/pnr.log   (or re-run with -v)
 ```
 
-Pin / constraint / board mistakes are surfaced by the toolchain (nextpnr / openFPGALoader) and interpreted by VerifyAgent — Shepherd does not pre-validate against a local pin database.
+Pin / constraint / board mistakes are surfaced by the toolchain (nextpnr / openFPGALoader) and interpreted by VerifyAgent. Shepherd does **not** drive builds from a local pin database; diagnosis may use curated pin-facts + datasheet links (see Knowledge) so fix suggestions stay grounded.
 
 ## Backend layer (apio, hidden)
 
@@ -126,11 +136,34 @@ shepherd CLI ─┬─ HDL adapters ──► staging dir (.shepherd/build/)
 
 Rules:
 
-- `**apio.ini` is generated, never user-owned.** It is written into `.shepherd/build/` from `shepherd.toml` on every run; users don’t see or edit it
-- **Board names are Shepherd’s.** Users write `board = "tangnano9k"`; the apio backend resolves it to `sipeed-tang-nano-9k` and validates it against `apio boards`. v0 accepts only Tang Nano 9K
+- **`apio.ini` is generated, never user-owned.** It is written into `.shepherd/build/` from `shepherd.toml` on every run; users don’t see or edit it
+- **Board names are Shepherd’s.** Users write `board = "tangnano9k"`; a **tiny allowlist** in the backend maps that to apio id `sipeed-tang-nano-9k` and validates via `apio boards`. This is not a Shepherd board registry — just a friendly-name map. v0 accepts only Tang Nano 9K
 - **Output translation lives in `backend/apio/translate.py`.** apio-specific hints, command names and paths are mapped to Shepherd equivalents before anything reaches the user or the LLM prompt
-- apio facts the backend must respect (apio 1.6 CLI): sources are taken in lexicographic order, `*_tb.v` / `*_tb.sv` are ignored for build, top module comes from `top-module`, `upload` builds implicitly
-- **Escape hatch (advanced, not in main help):** `shepherd backend -- <args>` runs the backend directly in the staging project, for debugging Shepherd itself
+- **Source order is explicit.** Prefer an ordered `sources = [...]` list in `shepherd.toml`. If globs are used, expand and sort deterministically before handing to the backend (do not rely on opaque lexicographic surprises)
+- apio facts the backend must respect (apio 1.6 CLI): `*_tb.v` / `*_tb.sv` are ignored for build, top module comes from `top-module`, `upload` builds implicitly
+- **Escape hatch (first-class for power users):** `--show-backend` and `shepherd backend -- <args>` for debugging Shepherd itself
+
+## Staging and path fidelity
+
+- **Pure Verilog / SV:** prefer generating a backend project that references **user source paths** (absolute or project-relative). Avoid copying the whole tree into staging when unnecessary
+- **Amaranth (and other emitters):** emit `.v` into `.shepherd/build/`; keep `.cst` / user constraints as the user’s files or symlinks into staging
+- **User-facing errors:** rewrite any staging paths back to the original project paths before printing or writing events
+- **Checkpoint after adapter:** emitted Verilog exists, top module present, before synth starts
+
+## Checkpoint checkers
+
+After **every** pipeline stage, run a deterministic checker before continuing. On failure: stop, write a `fail` event, point at the step log.
+
+| After | Checker (examples) |
+| --- | --- |
+| **HDL adapter** | Exit 0; emitted/passthrough Verilog present; top module resolvable; for `.sv`, smoke-elaborate / subset gate with a **clear** message if Yosys will reject constructs |
+| **synth** | Exit 0; expected synth artifacts present |
+| **P&R** | Exit 0; P&R output present |
+| **pack** | Exit 0; bitstream `.fs` exists and is non-empty |
+| **upload** | Exit 0; device seen / programmer success phrases |
+| **verify** | Verdict written; findings structured |
+
+`shepherd check --stage …` re-runs the checker + VerifyAgent on the last run’s logs.
 
 ## Auto-check policy (VerifyAgent)
 
@@ -171,60 +204,58 @@ An **HDL adapter** converts the user’s design language into something the back
 | HDL | v0 path | Status |
 | --- | --- | --- |
 | Verilog (`.v`) | passthrough adapter | v0 |
-| SystemVerilog (`.sv`) | passthrough adapter (Yosys SV support) | v0 — verify which SV constructs the bundled Yosys accepts; surface clear errors |
-| Amaranth (`.py`) | Amaranth elaborate → Verilog into staging dir | v0 |
+| SystemVerilog (`.sv`) | passthrough adapter (Yosys SV support) | v0 — **checkpoint** fails early with a clear Shepherd message if constructs are outside the supported subset |
+| Amaranth (`.py`) | Amaranth elaborate → Verilog into `.shepherd/build/` | v0 |
 | VHDL | GHDL synth → Verilog (or ghdl-yosys-plugin) | stretch — verify GHDL availability alongside the backend toolchain |
 | SpinalHDL / Chisel | run user’s generator → Verilog | later |
 
-Mixed-language projects: each non-Verilog source is emitted to Verilog, then everything is built as one project.
-
-**Staging:** every build happens in `.shepherd/build/` (generated/copied `.v`, copied **constraint (`.cst`)** files, generated backend project file), so the user’s tree only ever contains their sources and `shepherd.toml`.
+Mixed-language projects: each non-Verilog source is emitted to Verilog, then everything is built as one project. User-visible tree stays sources + `shepherd.toml` (+ `.cst`); generated backend files live under `.shepherd/`.
 
 ## Boards
 
-- **No** `boards.yaml`, **no** `lib/pins/*.yaml`, **no** Shepherd board registry
-- Project board lives in `**shepherd.toml**` (`board = "tangnano9k"`). The backend resolves and validates it (apio board definitions)
-- Pin / part / programmer knowledge for *build* comes from the backend’s board definitions and toolchain errors
-- Adding another board later = backend supports it + we lift the v0 allowlist — no Shepherd catalog to maintain
+- **No** `boards.yaml` build registry; **no** pin DB driving apio
+- Project board lives in **`shepherd.toml`** (`board = "tangnano9k"`). Tiny backend allowlist → apio id; validate with `apio boards`
+- Pin / part / programmer knowledge for *build* comes from the backend + toolchain errors
+- Adding another board later = backend supports it + lift allowlist entry
 
-### Knowledge files + datasheets
+### Knowledge: datasheets + diagnosis pin-facts
 
-`knowledge/` is for **human/LLM reference**, not for replacing the backend. Each supported board (v0: Tang Nano 9K) should identify the **correct datasheets** so diagnosis and `shepherd ask` cite the right docs.
+`knowledge/` is for **human/LLM / Verify diagnosis**, not for replacing apio.
 
-Suggested front matter in `knowledge/tangnano9k.md` (or a small sibling `knowledge/tangnano9k.datasheets.yaml` if we want structured lookup):
+1. **Datasheets (keep):** URLs + roles so `ask` / `explain` cite the right docs  
+2. **Pin-facts + fix templates (keep small):** `knowledge/tangnano9k.pins.md` (LED / UART / button nets from schematic) and `knowledge/errors/*.yaml` fix templates — used **only** by Verify/Explain so suggestions are grounded. **Not** used as a build-time board registry  
 
 ```yaml
-# example structured block (keep in knowledge/, not a board registry)
+# example structured block in knowledge/tangnano9k.datasheets.yaml
 board: tangnano9k
 datasheets:
   - id: gowin-gw1nr-9
     title: GW1NR-9 / GW1NR series FPGA datasheet
     role: fpga_device          # fpga_device | board | peripheral | programming
-    url: https://...          # canonical vendor URL
-    mirrors: []               # optional local path or alternate URL
+    url: https://...
     notes: Use for pin banks, IO standards, timing
   - id: sipeed-tang-nano-9k-schematic
     title: Tang Nano 9K schematic / board doc
     role: board
     url: https://...
-    notes: On-board LED / universal asynchronous receiver-transmitter (UART) / button net names
+    notes: On-board LED / UART / button net names
 ```
 
 Rules:
 
 - Prefer **vendor URLs + document title/version** over pasting datasheet text into the repo
-- Agents must resolve datasheets by `board` + `role` (e.g. pin / **input/output (I/O)** question → `board` + `fpga_device`)
-- Do not invent electrical facts from memory when a datasheet entry exists — point to it
+- Agents resolve datasheets by `board` + `role`; pin-facts for concrete `IO_LOC` suggestions
+- Do not invent electrical facts from memory when a datasheet or pin-facts entry exists
 
 ## Project config
 
-- `**shepherd.toml**` is the only project file users write: board, top module, sources, HDL adapters, constraints, AI on/off
-- The backend project file (`apio.ini`) is generated in staging from it and is not user-facing
+- **`shepherd.toml`** is the only project file users write: board, top module, sources, HDL adapters, constraints, AI on/off
+- The backend project file (`apio.ini`) is generated under `.shepherd/build/` and is not user-facing
 
 ```toml
 board = "tangnano9k"
 top = "blinky"
-sources = ["rtl/**/*.sv"]
+sources = ["rtl/blinky.sv", "rtl/uart.sv"]   # prefer explicit order
 constraints = "tangnano9k.cst"
 
 [adapters]
@@ -234,31 +265,28 @@ amaranth = { entry = "rtl/top.py:Top" }
 ai = true
 ```
 
-## Run record (replaces chat session context)
+## Run state (no `run.json`)
 
-Every run writes `.shepherd/runs/<timestamp>/` (`run.json` + per-step logs):
+**Canonical store = SQLite events DB** + **per-step log files**. We do **not** write `run.json` (avoids dual sources of truth). Revisit only if SQLite append volume proves too slow in practice (unlikely at demo log rates).
+
+Layout:
 
 ```text
-{
-  command,            # e.g. build
-  project_path,
-  board,              # Shepherd board name (e.g. tangnano9k)
-  hdl,                # detected languages
-  steps: [            # hdl_adapter | synth | pnr | pack | upload | verify
-    { name, exit_code, log_path, duration, backend_cmd }   # backend_cmd shown only with --show-backend
-  ],
-  artifacts,          # emitted .v, .cst, bitstream
-  verdict,            # pass | warn | fail
-  findings,           # signature matches + AI diagnosis + proposed fixes
-  backend: { name, version }   # e.g. apio 1.6.0 — for bug reports, not UX
-}
+.shepherd/
+  shepherd.db                 # runs + events (canonical)
+  runs/<run_id>/
+    pid                       # process id / group for UI cancel
+    adapter.log
+    synth.log
+    pnr.log
+    …
 ```
 
-`shepherd explain` and `shepherd ask` read the latest run record.
+`shepherd explain` / `ask` read the latest run from SQLite + those logs.
 
 ### Shared events DB (CLI + UI)
 
-For the hackathon demo (and optional Next.js UI), every run also appends to a **SQLite** database at `.shepherd/shepherd.db` (schema and polling details in [`PLAN_UI.md`](PLAN_UI.md)).
+Path: `.shepherd/shepherd.db` (schema in [`PLAN_UI.md`](PLAN_UI.md)).
 
 ```text
 shepherd CLI ──write──► SQLite events DB ◄──read── Next.js UI
@@ -268,9 +296,22 @@ shepherd CLI ──write──► SQLite events DB ◄──read── Next.js U
 
 Rules:
 
-- File logs under `.shepherd/runs/` remain; the DB is the **live event stream** both sides share
-- Python owns writes (migrations + append). The UI only reads (and may spawn `uv run shepherd …` to start work)
-- **Do not** add a FastAPI/Express bridge for the demo — keep the path dumb and local
+- Python owns writes (migrations + append). The UI only reads (and may spawn `uv run shepherd …`)
+- **Do not** add a FastAPI/Express bridge for the demo
+- UI cancel: see [`PLAN_UI.md`](PLAN_UI.md) (run id + **PID** / process group)
+
+### Network-required errors
+
+When a step needs internet (e.g. first `apio packages install`, Meta Llama call) and the network fails or is offline, Shepherd prints a short message such as:
+
+```text
+error: internet required for <toolchain install | AI explanation>
+  what failed: <one line>
+  what to do: connect to the network and re-run `shepherd doctor`
+              or re-run without AI: `shepherd build --no-ai`
+```
+
+No traceback as the primary UX.
 
 ## CLI
 
@@ -285,21 +326,22 @@ Rules:
 | `shepherd explain [LOG]` | Diagnose last failure or any log |
 | `shepherd ask "…"` | Optional Q&A with project + last run as context |
 
-Global flags: `--no-ai`, `--no-check`, `--json`, `--dry-run` (print underlying commands only), `--show-backend`, `-v` (stream raw toolchain output).
+Global flags: `--no-ai`, `--no-check`, `--yes` (non-interactive; required for UI spawns), `--json`, `--dry-run`, `--show-backend`, `-v`.
 
-Advanced / hidden: `shepherd backend -- <args>` (see Backend layer).
+Advanced: `shepherd backend -- <args>` (see Backend layer).
 
 ## Default technical decisions
 
 - **Language**: Python 3.11+
-- **Env / packaging**: `**uv`** only (`uv sync`, `uv add`, `uv run`); `uv.lock` committed
+- **Env / packaging**: **`uv`** only (`uv sync`, `uv add`, `uv run`); `uv.lock` committed
 - **Backend**: apio (pinned, `>=1.6,<2`) behind `backend/`; toolchain packages installed by `shepherd doctor`
 - **LLM**: Meta Llama via OpenAI-compatible HTTP client behind `llm/client.py`
 - **Agent loop**: lightweight ReAct-style loop per agent; no heavy framework
+- **Run state**: SQLite + step logs; **no `run.json`**
 - **Operating system (OS)**: macOS + Linux for v0; Windows later
 - **Secrets**: `.env.example` only; never commit keys
-- **Credit**: README acknowledges apio as the build backend and we respect its license — hidden from the workflow, not from the **user experience (UX)** of the normal flow
-- **UI (optional):** Next.js in `web/` per [`PLAN_UI.md`](PLAN_UI.md); shared SQLite events; **no FastAPI**
+- **Credit**: README acknowledges apio as the build backend and we respect its license — hidden from the default workflow, not from credits; `--show-backend` for power users
+- **UI (optional, after CLI):** Next.js in `web/` per [`PLAN_UI.md`](PLAN_UI.md); shared SQLite events; **no FastAPI**
 
 ### How teammates start
 
@@ -325,16 +367,16 @@ src/shepherd/
   __init__.py
   cli.py
   config.py                 # shepherd.toml read/write
-  runs.py                   # run records (files)
   events/
-    db.py                   # SQLite events DB writers (shared with UI)
+    db.py                   # SQLite canonical run/event store
     schema.sql
+    logs.py                 # .shepherd/runs/<run_id>/*.log + pid file
   llm/client.py
   backend/
     base.py                 # Backend protocol (only interface the rest of Shepherd uses)
     apio/
       runner.py             # subprocess wrapper, version check, log capture
-      project.py            # generate apio.ini in staging; board name resolution
+      project.py            # generate apio.ini; board allowlist map; user-path sources
       parse.py              # apio / yosys / nextpnr / openFPGALoader output parsing
       translate.py          # rewrite apio hints/commands into Shepherd terms
   adapters/                 # HDL adapters (not a UI)
@@ -343,7 +385,9 @@ src/shepherd/
     amaranth.py
     vhdl.py                 # stretch
   checks/
+    checkpoints.py          # fail-fast checkers after each stage
     artifacts.py            # bitstream / log artifact presence checks
+    paths.py                # rewrite staging paths → user paths
   agents/
     base.py
     shepherd.py             # orchestrator
@@ -351,12 +395,14 @@ src/shepherd/
     adopt.py
     verify.py
   knowledge/
-    tangnano9k.md           # board context for LLM + datasheet pointers
-    errors/                 # known error signatures (regex → cause → fix, in Shepherd terms)
+    tangnano9k.md           # board context for LLM
+    tangnano9k.datasheets.yaml
+    tangnano9k.pins.md      # diagnosis-only pin/net facts (not a build registry)
+    errors/                 # known error signatures (regex → cause → fix)
       yosys.yaml
       nextpnr.yaml
       openfpgaloader.yaml
-      backend.yaml          # apio-specific messages → Shepherd explanations
+      backend.yaml
 examples/
   blinky_sv/                # plain SystemVerilog (SV) + shepherd.toml
   uart_amaranth/            # Amaranth HDL adapter (UART demo)
@@ -376,8 +422,8 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 
 - Re-implementing anything the backend does (toolchain install, synth/P&R, programming, board/pin databases)
 - Exposing apio to users (commands, `apio.ini`, terminology) in the normal workflow
-- Shepherd-owned pin or board YAML
-- Natural-language → design scaffolding (possible later as an optional `shepherd new --describe`)
+- Shepherd-owned **build-time** pin/board registry (diagnosis-only pin-facts + datasheets are in scope)
+- Natural-language → design scaffolding (out of scope; this is an engineer tool, not an app builder)
 - Boards other than Tang Nano 9K
 - Additional backends (e.g. Gowin vendor **electronic design automation (EDA)**) — the protocol allows it later
 - Windows polish
@@ -397,23 +443,25 @@ docs/extending.md           # new HDL adapter / signature / agent / backend
 
 ## Implementation order
 
-1. Update `**PLAN.md**` / [`PLAN_UI.md`](PLAN_UI.md) (these documents)
-2. Scaffold package with `uv` (`pyproject.toml`, `uv.lock`, CLI, `.env.example`); `uv add apio`
-3. `backend/base.py` + `backend/apio/` (runner, staging project generation, board resolution) + `runs.py` + **`events/` SQLite writers**; `build` / `upload` with log capture
-4. `backend/apio/translate.py` + error signature DB + VerifyAgent (deterministic, then LLM) + `shepherd explain`
-5. DoctorAgent + `doctor --fix`
-6. HDL adapters: Verilog/SV passthrough, Amaranth; AdoptAgent + `shepherd init`
-7. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
-8. Smoke test: `doctor` → `init` → `build` → `upload` on hardware; `--no-ai`, `--json`, `--show-backend` paths; grep user-facing output for “apio” leaks
-9. (Optional) Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) — poll SQLite, spawn CLI; no FastAPI
+1. Keep [`PLAN.md`](PLAN.md) / [`PLAN_UI.md`](PLAN_UI.md) / [`README.md`](README.md) aligned (this pass)
+2. **CLI first:** scaffold with `uv`; `uv add apio`
+3. `backend/` + **`events/` SQLite** (no `run.json`) + step logs + PID file; `build` / `upload` with log capture
+4. **Checkpoint checkers** after every stage; path rewriter; clear network-required errors
+5. `translate.py` + error signatures + pin-facts/datasheets + VerifyAgent + `shepherd explain`
+6. DoctorAgent + `doctor --fix`
+7. HDL adapters: Verilog/SV passthrough (SV subset checkpoint), Amaranth; AdoptAgent + `shepherd init`
+8. Examples (incl. `broken/`) + README quickstart + `docs/extending.md`
+9. Smoke test CLI: `doctor` → `init` → `build` → `upload`; `--no-ai`, `--yes`, `--json`, `--show-backend`; no “apio” leaks in default UX
+10. **Then** Next.js `web/` per [`PLAN_UI.md`](PLAN_UI.md) — poll SQLite, spawn CLI with PID cancel; no FastAPI
 
 ## Success criteria
 
-- A user goes from clone to a programmed Tang Nano 9K without ever typing, reading or installing anything called apio
-- Experienced user runs `shepherd init` + `shepherd build` / `upload` in an existing Tang Nano 9K repo; the only project file they touch is `shepherd.toml`
-- Every run shows Shepherd’s steps and a `pass` / `warn` / `fail` verdict with concrete next steps in Shepherd terms; raw toolchain logs one flag away
+- A user goes from clone to a programmed Tang Nano 9K using Shepherd commands; default UX never requires typing `apio` (power users have `--show-backend`)
+- Experienced user runs `shepherd init` + `shepherd build` / `upload`; the only project file they touch is `shepherd.toml`
+- Every stage has a checkpoint; failures stop early with a clear step + log pointer
+- Run state lives in SQLite + logs only (no `run.json` dual write)
+- Network failures show a short “internet required for …” message
 - An Amaranth project builds and programs without the user wiring up the conversion
 - `shepherd doctor` gets a fresh macOS/Linux machine from nothing to a programmed board with only confirmations
 - `--no-ai` works for everything except explanations
-- Swapping or upgrading the backend touches only `backend/`; adding an HDL adapter or error signature needs no core changes
-- Demo UI (if used) reads the same SQLite event stream Shepherd writes — **no FastAPI** in the path
+- CLI is solid before UI work starts; demo UI (if used) reads the same SQLite stream — **no FastAPI**
