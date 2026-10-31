@@ -24,13 +24,18 @@ Planning / early scaffolding. Implementation order is **CLI first**, then UI.
 
 ## Intended quickstart (once implemented)
 
+We use **`uv` only** (never `pip`). End users don’t hand-manage envs — **`shepherd init` runs `uv` internally**:
+
 ```bash
-cd FPGA-shepherd
-uv sync
-cp .env.example .env        # set META_API_KEY for AI explain/ask
-uv run shepherd doctor      # may need internet the first time (clear error if offline)
-cd examples/blinky_sv && uv run shepherd upload
+uv tool install fpga-shepherd   # once — installs the `shepherd` CLI via uv
+cd my-fpga-project
+shepherd init                   # project + deps (uv + toolchain; may need internet)
+shepherd upload
 ```
+
+Optional: set `META_API_KEY` for AI explain/ask. Repair path: `shepherd doctor --fix`.
+
+Contributors in this repo: `uv sync` / `uv run` — see [`PLAN.md`](PLAN.md).
 
 UI (after CLI works): see [`PLAN_UI.md`](PLAN_UI.md).
 
