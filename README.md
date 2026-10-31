@@ -81,6 +81,14 @@ For AI-assisted `explain` / `ask`, set `META_API_KEY`.
 
 ## Status
 
-Planning / early scaffolding. CLI first, then an optional UI.
+Early development, CLI first, then an optional UI. Working now: `shepherd build` / `shepherd upload` (Verilog / SystemVerilog), `--dry-run`, `--show-backend`, `--json`, `-v`, run history in `.shepherd/shepherd.db`. Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18).
+
+## Develop
+
+```bash
+uv sync
+uv run pytest
+uv run shepherd -C examples/blinky_sv build      # needs the toolchain; see `--dry-run` otherwise
+```
 
 Build backend: [apio](https://fpgawars.github.io/apio/docs) (FPGAwars). You don’t need to install or learn it separately.
