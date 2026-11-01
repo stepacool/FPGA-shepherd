@@ -136,7 +136,11 @@ def init(
     sctx: Context = ctx.obj
     if path is not None:
         sctx.project = path.resolve()
-    run_init(sctx, Output(sctx), path)
+    try:
+        run_init(sctx, Output(sctx), path)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
 
 
 @app.command()
