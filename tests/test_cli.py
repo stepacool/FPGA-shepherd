@@ -62,12 +62,55 @@ def test_version():
 
 
 @pytest.mark.parametrize(
-    "args", [["doctor"], ["init"], ["lint"], ["report"], ["ask", "why?"], ["ui"]]
+    "args", [["doctor"], ["lint"], ["report"], ["ask", "why?"], ["ui"]]
 )
 def test_unimplemented_commands_exit_2(args):
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_init_adopts_existing_toml(tmp_path: Path, monkeypatch):
+    (tmp_path / "rtl").mkdir()
+    (tmp_path / "rtl" / "blinky.sv").write_text("module blinky; endmodule\n")
+    (tmp_path / "shepherd.toml").write_text(
+        'board = "tangnano9k"\ntop = "blinky"\nsources = ["rtl/blinky.sv"]\n'
+    )
+
+    class FakeBackend:
+        def ensure_toolchain(self, sink):
+            from shepherd.backend.base import StepResult
+
+            return StepResult("toolchain", True, 0, None)
+
+    monkeypatch.setattr("shepherd.init_cmd.get_backend", lambda dry_run=False: FakeBackend())
+    result = runner.invoke(cli.app, ["--project", str(tmp_path), "init"])
+    assert result.exit_code == 0, result.output
+    assert "found shepherd.toml" in result.output
+    assert "packages ready" in result.output
+
+
+def test_init_writes_toml_for_detected_hdl(tmp_path: Path, monkeypatch):
+    (tmp_path / "rtl").mkdir()
+    (tmp_path / "rtl" / "blinky.sv").write_text(
+        "module blinky (input clk, output led); endmodule\n"
+    )
+    (tmp_path / "tangnano9k.cst").write_text('IO_LOC "clk" 52;\n')
+
+    class FakeBackend:
+        def ensure_toolchain(self, sink):
+            from shepherd.backend.base import StepResult
+
+            return StepResult("toolchain", True, 0, None)
+
+    monkeypatch.setattr("shepherd.init_cmd.get_backend", lambda dry_run=False: FakeBackend())
+    result = runner.invoke(cli.app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "wrote shepherd.toml" in result.output
+    text = (tmp_path / "shepherd.toml").read_text()
+    assert 'top = "blinky"' in text
+    assert "rtl/blinky.sv" in text
+    assert "tangnano9k.cst" in text
 
 
 def test_global_flags_land_on_context(tmp_path: Path, monkeypatch):

@@ -71,6 +71,22 @@ class ApioBackend:
     def upload(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult:
         return self._run("upload", ["upload"], staging, log_path, sink)
 
+    def ensure_toolchain(self, sink: StepSink) -> StepResult:
+        """Install backend packages (oss-cad-suite, definitions, …). Needs internet once."""
+        argv = [*runner.apio_argv(), "packages", "install"]
+        sink.command(argv)
+        if self.dry_run:
+            return StepResult("toolchain", True, 0, None, commands=[argv], dry_run=True)
+
+        def on_line(line: str) -> None:
+            if not parse.is_noise(line):
+                sink.line(line)
+
+        # Packages are global to the backend install; cwd only needs to exist.
+        cwd = Path.cwd()
+        code = runner.run(argv, cwd, None, on_line)
+        return StepResult("toolchain", code == 0, code, None, commands=[argv])
+
     def passthrough(self, args: list[str], cwd: Path) -> int:
         cwd.mkdir(parents=True, exist_ok=True)
         return subprocess.call([*runner.apio_argv(), *args], cwd=cwd)

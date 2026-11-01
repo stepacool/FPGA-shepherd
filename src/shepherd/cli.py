@@ -127,10 +127,16 @@ def doctor(
 
 @app.command()
 def init(
+    ctx: typer.Context,
     path: Annotated[Path | None, typer.Argument(help="Project folder (default: current).")] = None,
 ) -> None:
     """Set up a project: write or adopt shepherd.toml and install the toolchain."""
-    _not_implemented("init")
+    from shepherd.init_cmd import run_init
+
+    sctx: Context = ctx.obj
+    if path is not None:
+        sctx.project = path.resolve()
+    run_init(sctx, Output(sctx), path)
 
 
 @app.command()
