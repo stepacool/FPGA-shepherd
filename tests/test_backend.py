@@ -162,8 +162,8 @@ def test_stage_detection_and_noise():
 
 
 def test_backend_name_only_inside_backend_package():
-    """Nothing outside backend/apio/ may know the backend exists (except the escape hatch)."""
-    allowed = {SRC / "backend" / "__init__.py", SRC / "cli.py"}
+    """Nothing outside backend/apio/ may know the backend exists (factory facade excepted)."""
+    allowed = {SRC / "backend" / "__init__.py"}
     offenders = []
     for path in SRC.rglob("*.py"):
         if (SRC / "backend" / "apio") in path.parents or path in allowed:

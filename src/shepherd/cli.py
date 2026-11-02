@@ -105,6 +105,64 @@ def _not_implemented(name: str) -> None:
     raise typer.Exit(EXIT_USAGE)
 
 
+def _apply_command_flags(
+    ctx: typer.Context,
+    *,
+    no_ai: bool = False,
+    no_check: bool = False,
+    yes: bool = False,
+    json_out: bool = False,
+    dry_run: bool = False,
+    show_backend: bool = False,
+    verbose: bool = False,
+    project: Path | None = None,
+) -> Context:
+    """Merge flags passed after the subcommand into the shared Context (OR with root flags)."""
+    global _current
+    sctx: Context = ctx.obj
+    if no_ai:
+        sctx.no_ai = True
+    if no_check:
+        sctx.no_check = True
+    if yes:
+        sctx.yes = True
+    if json_out:
+        sctx.json = True
+    if dry_run:
+        sctx.dry_run = True
+    if show_backend:
+        sctx.show_backend = True
+    if verbose:
+        sctx.verbose = True
+    if project is not None:
+        sctx.project = project.resolve()
+    _current = sctx
+    return sctx
+
+
+# Re-declared on implemented commands so `shepherd build --dry-run` works (not only
+# `shepherd --dry-run build`). Root callback still owns the primary help listing.
+_NoAi = Annotated[bool, typer.Option("--no-ai", help="Skip AI explanations.")]
+_NoCheck = Annotated[
+    bool, typer.Option("--no-check", help="Skip checkpoint checks and verification.")
+]
+_Yes = Annotated[bool, typer.Option("--yes", "-y", help="Non-interactive: never prompt.")]
+_Json = Annotated[
+    bool, typer.Option("--json", help="Print one machine-readable JSON result on stdout.")
+]
+_DryRun = Annotated[
+    bool, typer.Option("--dry-run", help="Show what would run; write and execute nothing.")
+]
+_ShowBackend = Annotated[
+    bool, typer.Option("--show-backend", help="Print the exact underlying tool commands.")
+]
+_Verbose = Annotated[bool, typer.Option("--verbose", "-v", help="Stream raw toolchain output.")]
+_Project = Annotated[
+    Path | None,
+    typer.Option("--project", "-C", help="Project folder (default: current folder)."),
+]
+
+
 def _run_pipeline(ctx: typer.Context, command: str, flash: bool = False) -> None:
     from shepherd.pipeline import Pipeline
 
@@ -129,11 +187,29 @@ def doctor(
 def init(
     ctx: typer.Context,
     path: Annotated[Path | None, typer.Argument(help="Project folder (default: current).")] = None,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Set up a project: write or adopt shepherd.toml and install the toolchain."""
     from shepherd.init_cmd import run_init
 
-    sctx: Context = ctx.obj
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
     if path is not None:
         sctx.project = path.resolve()
     try:
@@ -144,8 +220,29 @@ def init(
 
 
 @app.command()
-def build(ctx: typer.Context) -> None:
+def build(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+) -> None:
     """Build the bitstream: HDL adapter, synth, place and route, pack, verify."""
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
     _run_pipeline(ctx, "build")
 
 
@@ -155,8 +252,27 @@ def upload(
     flash: Annotated[
         bool, typer.Option("--flash", help="Write to flash (persists). Default: SRAM.")
     ] = False,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Build and program the board (SRAM by default)."""
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
     _run_pipeline(ctx, "upload", flash=flash)
 
 
@@ -243,8 +359,7 @@ def help_(
 def backend(ctx: typer.Context) -> None:
     """Advanced: run the underlying build backend directly (for debugging Shepherd)."""
     from shepherd import config as config_mod
-    from shepherd.backend import get_backend
-    from shepherd.backend.apio.project import staging_dir  # backend-specific escape hatch
+    from shepherd.backend import get_backend, staging_dir
 
     sctx: Context = ctx.obj
     root = config_mod.find_project_root(sctx.project) or sctx.project

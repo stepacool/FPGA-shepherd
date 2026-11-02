@@ -178,3 +178,55 @@ def test_global_flags_land_on_context(tmp_path: Path, monkeypatch):
     assert (ctx.dry_run, ctx.show_backend, ctx.verbose) == (True, True, True)
     assert ctx.project == tmp_path.resolve()
     assert ctx.run_id == "r1"
+
+
+def test_build_accepts_dry_run_after_subcommand(tmp_path: Path, monkeypatch):
+    """#6 AC: `shepherd build --dry-run` (flags after the command) must work."""
+    (tmp_path / "rtl").mkdir()
+    (tmp_path / "rtl" / "blinky.sv").write_text("module blinky; endmodule\n")
+    (tmp_path / "tangnano9k.cst").write_text('IO_LOC "led" 10;\n')
+    (tmp_path / "shepherd.toml").write_text(
+        'board = "tangnano9k"\ntop = "blinky"\nsources = ["rtl/blinky.sv"]\n'
+        'constraints = "tangnano9k.cst"\n'
+    )
+
+    class FakeBackend:
+        def __init__(self, dry_run=False):
+            self.dry_run = dry_run
+
+        def resolve_board(self, name):
+            return "sipeed-tang-nano-9k"
+
+        def prepare(self, cfg, sources, constraints, *, flash=False):
+            from shepherd.backend.base import Staging
+
+            return Staging(dir=tmp_path / ".shepherd" / "build")
+
+        def build(self, staging, log_path, sink, *, verbose=False):
+            from shepherd.backend.base import StepResult
+
+            sink.command(["fake", "build"])
+            return StepResult("build", True, 0, None, dry_run=True)
+
+    monkeypatch.setattr("shepherd.pipeline.get_backend", lambda dry_run=False: FakeBackend(dry_run))
+    result = runner.invoke(cli.app, ["build", "--dry-run", "--project", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "dry run" in result.output.lower()
+    assert not (tmp_path / ".shepherd").exists()
+
+
+def test_post_command_flags_merge_with_root(tmp_path: Path, monkeypatch):
+    seen = {}
+
+    def capture(ctx, command, flash=False):
+        seen["ctx"] = ctx.obj
+
+    monkeypatch.setattr(cli, "_run_pipeline", capture)
+    result = runner.invoke(
+        cli.app,
+        ["--no-ai", "build", "--dry-run", "--json", "--project", str(tmp_path)],
+    )
+    assert result.exit_code == 0, result.output
+    ctx = seen["ctx"]
+    assert ctx.no_ai and ctx.dry_run and ctx.json
+    assert ctx.project == tmp_path.resolve()
