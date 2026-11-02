@@ -1,0 +1,20 @@
+- id: openfpgaloader-no-device
+  tool: openfpgaloader
+  match: "(?i)(no device found|device not found|Cannot find device)"
+  cause: "no Tang Nano 9K was detected on USB"
+  fix: "plug in the board, check the cable, then run `shepherd doctor --fix`"
+  docs: []
+
+- id: openfpgaloader-ftdi
+  tool: openfpgaloader
+  match: "(?i)unable to open ftdi|libusb_open\\(\\) failed|permission denied"
+  cause: "the programmer could not open the FTDI/USB device (permissions or driver)"
+  fix: "run `shepherd doctor --fix` to install drivers / udev rules, then unplug and replug the board"
+  docs: []
+
+- id: openfpgaloader-busy
+  tool: openfpgaloader
+  match: "(?i)(device or resource busy|already open|claim interface)"
+  cause: "another process is using the board programmer"
+  fix: "close other programmer tools and re-run `shepherd upload`"
+  docs: []

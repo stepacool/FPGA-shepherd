@@ -34,5 +34,23 @@ class EnvironmentProblem(ShepherdError):
     exit_code = EXIT_ENV
 
 
+class NetworkRequired(EnvironmentProblem):
+    """A step needs internet and the network failed or is offline."""
+
+    def __init__(self, what: str, *, failed: str | None = None, hint: str | None = None):
+        self.what = what
+        self.failed = failed
+        message = f"internet required for {what}"
+        if hint is None:
+            if what == "AI explanation":
+                hint = "connect to the network and re-run, or use `--no-ai`"
+            else:
+                hint = (
+                    "connect to the network and re-run `shepherd init` "
+                    "(or `shepherd doctor --fix` to repair)"
+                )
+        super().__init__(message, hint=hint)
+
+
 class RunLocked(ShepherdError):
     exit_code = EXIT_ENV

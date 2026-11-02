@@ -12,7 +12,7 @@ from shepherd import config as config_mod
 from shepherd.backend import get_backend
 from shepherd.backend.base import NullSink, StepSink
 from shepherd.context import Context
-from shepherd.errors import ConfigError, EnvironmentProblem, ShepherdError
+from shepherd.errors import ConfigError, ShepherdError
 from shepherd.output import Output, display_path
 
 
@@ -144,15 +144,16 @@ def run_init(ctx: Context, out: Output, path: Path | None = None) -> InitResult:
     except ShepherdError:
         raise
     except OSError as e:
-        raise EnvironmentProblem(
-            "internet required for toolchain install",
-            hint="connect to the network and re-run `shepherd init`",
-        ) from e
+        from shepherd.errors import NetworkRequired
+
+        raise NetworkRequired("toolchain install", failed=str(e)) from e
 
     if not step.ok and not ctx.dry_run:
-        raise EnvironmentProblem(
-            "toolchain install failed",
-            hint="connect to the network and re-run `shepherd init` (or `shepherd doctor --fix`)",
+        from shepherd.errors import NetworkRequired
+
+        raise NetworkRequired(
+            "toolchain install",
+            failed="toolchain package install exited non-zero",
         )
 
     out.detail("packages ready" if not ctx.dry_run else "would install toolchain packages", "dim")

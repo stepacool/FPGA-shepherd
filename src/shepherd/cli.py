@@ -306,24 +306,107 @@ def report() -> None:
 
 @app.command()
 def check(
+    ctx: typer.Context,
     stage: Annotated[Stage, typer.Option("--stage", help="Stage to re-check.")],
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Re-run the checkpoint and verification for a stage of the last run."""
-    _not_implemented("check")
+    from shepherd.explain_cmd import run_check
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    try:
+        code = run_check(sctx, Output(sctx), stage.value)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
 
 
 @app.command()
 def explain(
+    ctx: typer.Context,
     log: Annotated[Path | None, typer.Argument(help="Log file (default: last failed run).")] = None,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Diagnose the last failure, or any log file."""
-    _not_implemented("explain")
+    from shepherd.explain_cmd import run_explain
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    try:
+        code = run_explain(sctx, Output(sctx), log)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
 
 
 @app.command()
-def ask(question: Annotated[str, typer.Argument(help="Your question.")]) -> None:
+def ask(
+    ctx: typer.Context,
+    question: Annotated[str, typer.Argument(help="Your question.")],
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+) -> None:
     """Ask a question with the project and last run as context."""
-    _not_implemented("ask")
+    from shepherd.ask_cmd import run_ask
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    try:
+        code = run_ask(sctx, Output(sctx), question)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
 
 
 @app.command()
@@ -384,3 +467,13 @@ def main() -> None:
     except ShepherdError as e:
         _print_error(e)
         sys.exit(e.exit_code)
+    except SystemExit:
+        raise
+    except BaseException as e:
+        ctx = _current or Context()
+        out = Output(ctx)
+        out.detail(f"error: unexpected failure: {e}", "red")
+        out.detail("re-run with -v for details", "dim")
+        if ctx.verbose:
+            Console(stderr=True).print_exception()
+        sys.exit(EXIT_FAIL)

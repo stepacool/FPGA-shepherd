@@ -1,0 +1,35 @@
+- id: nextpnr-unconstrained-io
+  tool: nextpnr
+  match: "ERROR:\\s*Unconstrained IO:(?P<port>\\S+)"
+  cause: "port `{port}` has no IO_LOC in the constraints file"
+  fix: "add `IO_LOC \"{port}\" <pin>;` to your `.cst` (see board pin facts), then re-run `shepherd build`"
+  docs: [sipeed-tang-nano-9k]
+
+- id: nextpnr-unconstrained-io-alt
+  tool: nextpnr
+  match: "IO '(?P<port>\\w+)' is unconstrained"
+  cause: "port `{port}` has no IO_LOC in the constraints file"
+  fix: "add `IO_LOC \"{port}\" <pin>;` to your `.cst`, then re-run `shepherd build`"
+  docs: [sipeed-tang-nano-9k]
+
+- id: nextpnr-unknown-pin
+  tool: nextpnr
+  match: "ERROR:.*IO_LOC.*(?P<pin>\\d+).*(unknown|invalid|not found)"
+  cause: "constraints reference an unknown or invalid pin"
+  fix: "check the pin number against the Tang Nano 9K schematic and correct the IO_LOC line"
+  docs: [sipeed-tang-nano-9k]
+
+- id: nextpnr-utilization
+  tool: nextpnr
+  match: "(?i)(error:.*out of|ERROR:.*overflow|failed to place)"
+  cause: "the design does not fit on the device (utilization overflow)"
+  fix: "reduce logic, split the design, or check you selected the right board in shepherd.toml"
+  docs: []
+
+- id: nextpnr-timing-warn
+  tool: nextpnr
+  match: "(?i)timing.*fail|critical path.*violat"
+  cause: "timing constraints were not met"
+  fix: "lower the clock, pipeline the path, or treat this as a warning if the design still works"
+  docs: []
+  level: warn

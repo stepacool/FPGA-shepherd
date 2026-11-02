@@ -12,10 +12,20 @@ from shepherd.context import Context
 from shepherd.events.db import EventStore
 from shepherd.output import Output
 
-OK_SCRIPT = [("stage", "synth"), ("stage", "pnr"), ("stage", "pack")]
+# Stage events use toolchain command echoes so checkpoint phase attribution matches real logs.
+OK_SCRIPT = [
+    ("stage", "synth"),
+    ("line", "yosys -p synth_gowin -json _build/default/hardware.json"),
+    ("stage", "pnr"),
+    ("line", "nextpnr-himbaechel --json _build/default/hardware.json"),
+    ("stage", "pack"),
+    ("line", "gowin_pack -o _build/default/hardware.fs"),
+]
 PNR_FAIL_SCRIPT = [
     ("stage", "synth"),
+    ("line", "yosys -p synth_gowin -json _build/default/hardware.json"),
     ("stage", "pnr"),
+    ("line", "nextpnr-himbaechel --json _build/default/hardware.json"),
     ("line", "ERROR: Unconstrained IO:led_OBUF_O"),
 ]
 
@@ -55,15 +65,30 @@ class FakeBackend:
 
     def build(self, staging, log_path, sink, *, verbose=False):
         result = self._replay("build", self.build_script, self.build_code, log_path, sink)
-        if result.ok and not result.dry_run:
-            bitstream = staging.dir / "_build" / "hardware.fs"
-            bitstream.parent.mkdir(parents=True, exist_ok=True)
+        if self.dry_run:
+            return result
+        cache = staging.dir / "_build" / "default"
+        cache.mkdir(parents=True, exist_ok=True)
+        # Mirror real toolchain artifacts for stages that completed successfully.
+        saw = [value for kind, value in self.build_script if kind == "stage"]
+        if "synth" in saw or (result.ok and not saw):
+            (cache / "hardware.json").write_text("{}")
+        if "pnr" in saw and result.ok:
+            (cache / "hardware.pnr.json").write_text("{}")
+        elif "pnr" in saw and not result.ok:
+            (cache / "hardware.json").write_text("{}")
+        if result.ok:
+            if not saw:
+                (cache / "hardware.json").write_text("{}")
+                (cache / "hardware.pnr.json").write_text("{}")
+            bitstream = cache / "hardware.fs"
             bitstream.write_text("bits")
             result.artifacts["bitstream"] = bitstream
         return result
 
     def upload(self, staging, log_path, sink):
-        return self._replay("upload", [("line", "Done")], self.upload_code, log_path, sink)
+        script = [("line", "Jtag frequency: use default"), ("line", "Done")]
+        return self._replay("upload", script, self.upload_code, log_path, sink)
 
     def passthrough(self, args, cwd):
         return 0
@@ -83,8 +108,13 @@ def kinds(project: Path, run_id: str) -> list[tuple[str, str]]:
 def test_build_pass_writes_run_events_logs_and_artifact(project: Path):
     result, _ = run(project)
     assert result.verdict == "pass"
-    assert [s.name for s in result.steps] == ["synth", "pnr", "pack"]
-    assert kinds(project, result.run_id) == [
+    assert [s.name for s in result.steps] == ["adapter", "synth", "pnr", "pack"]
+    milestone = [
+        (k, s)
+        for k, s in kinds(project, result.run_id)
+        if k in {"step_start", "step_end", "artifact", "verdict"}
+    ]
+    assert milestone == [
         ("step_start", "adapter"),
         ("step_end", "adapter"),
         ("step_start", "synth"),
@@ -111,10 +141,14 @@ def test_build_fail_stops_and_reports(project: Path, capsys):
     backend = FakeBackend(build_script=PNR_FAIL_SCRIPT, build_code=2)
     result, _ = run(project, backend=backend)
     assert result.verdict == "fail"
-    assert [(s.name, s.ok) for s in result.steps] == [("synth", True), ("pnr", False)]
+    assert [(s.name, s.ok) for s in result.steps] == [
+        ("adapter", True),
+        ("synth", True),
+        ("pnr", False),
+    ]
     out = capsys.readouterr().out
     assert "pnr" in out and "FAIL" in out
-    assert "error: Unconstrained IO:led_OBUF_O" in out
+    assert "Unconstrained IO:led_OBUF_O" in out
     assert "build.log" in out
     events = EventStore.open(project).events(result.run_id)
     errors = [e["message"] for e in events if e["kind"] == "log" and e["level"] == "error"]
@@ -126,11 +160,19 @@ def test_cached_build_marks_stages_up_to_date(project: Path, capsys):
     result, _ = run(project, backend=FakeBackend(build_script=[]))
     assert result.verdict == "pass"
     assert [(s.name, s.cached) for s in result.steps] == [
+        ("adapter", False),
         ("synth", True),
         ("pnr", True),
         ("pack", True),
     ]
     assert "up to date" in capsys.readouterr().out
+
+
+def test_no_check_skips_checkpoints_but_exit_code_still_fails(project: Path):
+    backend = FakeBackend(build_script=PNR_FAIL_SCRIPT, build_code=2)
+    result, _ = run(project, backend=backend, no_check=True)
+    assert result.verdict == "fail"
+    assert result.findings == []
 
 
 def test_upload_runs_build_then_upload(project: Path):
@@ -184,7 +226,7 @@ def test_cli_json_is_the_only_stdout(project: Path, monkeypatch):
     data = json.loads(result.stdout)
     assert data["verdict"] == "pass"
     assert data["command"] == "build"
-    assert [s["name"] for s in data["steps"]] == ["synth", "pnr", "pack"]
+    assert [s["name"] for s in data["steps"]] == ["adapter", "synth", "pnr", "pack"]
     assert "bitstream" in data["artifacts"]
     assert "verdict" in result.stderr
 

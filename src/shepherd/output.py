@@ -53,6 +53,18 @@ class Output:
             self.console.print(f"   [dim]backend: {escape(shlex.join(argv))}[/]")
 
     def error(self, err: ShepherdError) -> None:
+        from shepherd.errors import NetworkRequired
+
+        if isinstance(err, NetworkRequired):
+            self.console.print(f"[bold red]error:[/] internet required for {escape(err.what)}")
+            if err.failed:
+                self.console.print(f"  what failed: {escape(err.failed)}")
+            self.console.print("  what to do: connect to the network and re-run `shepherd init`")
+            if err.what == "AI explanation":
+                self.console.print("              (or re-run without AI: `shepherd build --no-ai`)")
+            else:
+                self.console.print("              (or `shepherd doctor --fix` to repair)")
+            return
         self.console.print(f"[bold red]error:[/] {escape(err.message)}")
         if err.hint:
             self.console.print(f"  [dim]hint:[/] {escape(err.hint)}")

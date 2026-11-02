@@ -14,6 +14,7 @@ __all__ = [
     "StepSink",
     "get_backend",
     "staging_dir",
+    "translate_line",
 ]
 
 
@@ -28,3 +29,10 @@ def staging_dir(project_root: Path) -> Path:
     from shepherd.backend.apio.project import staging_dir as _staging_dir
 
     return _staging_dir(project_root)
+
+
+def translate_line(line: str) -> str | None:
+    """Shepherd-facing rewrite of a backend/tool line; None means drop."""
+    from shepherd.backend.apio.translate import translate_line as _translate
+
+    return _translate(line)

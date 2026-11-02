@@ -1,0 +1,20 @@
+- id: yosys-syntax-error
+  tool: yosys
+  match: '(?P<file>[^\s:]+):(?P<line>\d+):\s*ERROR:\s*syntax error(?P<detail>.*)'
+  cause: "syntax error in `{file}` at line {line}{detail}"
+  fix: "open `{file}` around line {line} and fix the syntax, then re-run `shepherd build`"
+  docs: []
+
+- id: yosys-missing-top
+  tool: yosys
+  match: "ERROR: Module `(?P<top>\\w+)' not found"
+  cause: "top module `{top}` was not found in the design sources"
+  fix: "set `top` in shepherd.toml to a module that exists, or add `module {top}`"
+  docs: []
+
+- id: yosys-generic-error
+  tool: yosys
+  match: 'ERROR:\s+(?P<msg>.+)'
+  cause: "synthesis failed: {msg}"
+  fix: "inspect the synth section of the build log (`shepherd explain`) and fix the reported HDL issue"
+  docs: []

@@ -61,11 +61,17 @@ def test_version():
     assert result.output.startswith("shepherd ")
 
 
-@pytest.mark.parametrize("args", [["doctor"], ["lint"], ["report"], ["ask", "why?"], ["ui"]])
+@pytest.mark.parametrize("args", [["doctor"], ["lint"], ["report"], ["ui"]])
 def test_unimplemented_commands_exit_2(args):
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 2
     assert "not implemented yet" in result.output
+
+
+def test_explain_help_has_no_backend_leak():
+    result = runner.invoke(cli.app, ["explain", "--help"])
+    assert result.exit_code == 0
+    assert "apio" not in result.output.lower()
 
 
 def test_init_adopts_existing_toml(tmp_path: Path, monkeypatch):

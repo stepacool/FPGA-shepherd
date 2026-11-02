@@ -1,0 +1,13 @@
+- id: backend-remote-config
+  tool: backend
+  match: "(?i)No suitable cached remote config|Failed to fetch|network is unreachable"
+  cause: "the build backend could not reach its package index (network required)"
+  fix: "connect to the network and re-run `shepherd init` (or `shepherd doctor --fix`)"
+  docs: []
+
+- id: backend-package-fail
+  tool: backend
+  match: "(?i)packages? (install|update).*fail|Error downloading"
+  cause: "toolchain package install failed"
+  fix: "connect to the network and re-run `shepherd init`"
+  docs: []

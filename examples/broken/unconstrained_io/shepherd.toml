@@ -1,0 +1,4 @@
+board = "tangnano9k"
+top = "blinky"
+sources = ["rtl/blinky.sv"]
+constraints = "tangnano9k.cst"
