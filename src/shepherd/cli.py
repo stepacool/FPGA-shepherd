@@ -73,7 +73,7 @@ def main_callback(
     ] = False,
     project: Annotated[
         Path | None,
-        typer.Option("--project", "-C", help="Project folder (default: current folder)."),
+        typer.Option("--project", "-P", help="Project folder (default: current folder)."),
     ] = None,
     run_id: Annotated[str | None, typer.Option("--run-id", hidden=True)] = None,
     version: Annotated[
@@ -159,7 +159,7 @@ _ShowBackend = Annotated[
 _Verbose = Annotated[bool, typer.Option("--verbose", "-v", help="Stream raw toolchain output.")]
 _Project = Annotated[
     Path | None,
-    typer.Option("--project", "-C", help="Project folder (default: current folder)."),
+    typer.Option("--project", "-P", help="Project folder (default: current folder)."),
 ]
 
 

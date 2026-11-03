@@ -88,7 +88,7 @@ Early development, CLI first, then an optional UI. Working now: `shepherd build`
 ```bash
 uv sync
 uv run pytest
-uv run shepherd -C examples/blinky_sv build      # needs the toolchain; see `--dry-run` otherwise
+uv run shepherd -P examples/blinky_sv build      # needs the toolchain; see `--dry-run` otherwise
 ```
 
 Build backend: [apio](https://fpgawars.github.io/apio/docs) (FPGAwars). You don’t need to install or learn it separately.
