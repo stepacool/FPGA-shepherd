@@ -71,6 +71,33 @@ class ApioBackend:
     def upload(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult:
         return self._run("upload", ["upload"], staging, log_path, sink)
 
+    def lint(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult:
+        return self._run("lint", ["lint"], staging, log_path, sink)
+
+    def sim(
+        self,
+        staging: Staging,
+        log_path: Path | None,
+        sink: StepSink,
+        testbench: str | None = None,
+    ) -> StepResult:
+        # --no-gtkwave: do not open a GUI viewer (Shepherd default).
+        args = ["sim", "--no-gtkwave", *([testbench] if testbench else [])]
+        return self._run("sim", args, staging, log_path, sink)
+
+    def test(
+        self,
+        staging: Staging,
+        log_path: Path | None,
+        sink: StepSink,
+        testbench: str | None = None,
+    ) -> StepResult:
+        args = ["test", *([testbench] if testbench else [])]
+        return self._run("test", args, staging, log_path, sink)
+
+    def report(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult:
+        return self._run("report", ["report"], staging, log_path, sink)
+
     def ensure_toolchain(self, sink: StepSink) -> StepResult:
         """Install backend packages (oss-cad-suite, definitions, …). Needs internet once."""
         argv = [*runner.apio_argv(), "packages", "install"]
@@ -86,6 +113,48 @@ class ApioBackend:
         cwd = Path.cwd()
         code = runner.run(argv, cwd, None, on_line)
         return StepResult("toolchain", code == 0, code, None, commands=[argv])
+
+    def devices(self) -> list[str]:
+        """Return connected USB device lines that look like a Tang Nano programmer."""
+        lines: list[str] = []
+        try:
+            out = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        for line in out.splitlines():
+            if "0403:6010" in line or "Future Technology" in line:
+                lines.append(line.strip())
+        if lines:
+            return lines
+        # macOS fallback
+        try:
+            out = subprocess.run(
+                ["system_profiler", "SPUSBDataType"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if "0403" in out and "6010" in out:
+            return ["FTDI 0403:6010 (seen via system_profiler)"]
+        return []
+
+    def install_drivers(self, kind: str = "ftdi") -> list[str]:
+        """Return OS-specific commands for the user to install programmer access."""
+        import sys
+
+        if sys.platform.startswith("linux"):
+            return [
+                'sudo usermod -aG plugdev,dialout "$USER"',
+                "# then log out/in, or: newgrp plugdev",
+            ]
+        if sys.platform == "darwin":
+            return [
+                "# If AppleUSBFTDI conflicts with libftdi, unload it (may need sudo):",
+                "sudo kextunload -b com.apple.driver.AppleUSBFTDI || true",
+            ]
+        return ["# driver install is not automated on this OS — see shepherd doctor"]
 
     def passthrough(self, args: list[str], cwd: Path) -> int:
         cwd.mkdir(parents=True, exist_ok=True)

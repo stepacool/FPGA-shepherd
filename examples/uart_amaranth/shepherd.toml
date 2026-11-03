@@ -1,0 +1,7 @@
+board = "tangnano9k"
+top = "uart_hello"
+sources = []
+constraints = "tangnano9k.cst"
+
+[adapters.amaranth]
+entry = "rtl/top.py:Top"

@@ -15,9 +15,9 @@ from shepherd.llm.prompt import MAX_LOG_CHARS, build_diagnosis_messages, trim_ar
 
 def test_load_dotenv_does_not_override(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("META_API_KEY", "from-env")
+    monkeypatch.delenv("META_MODEL", raising=False)
     (tmp_path / ".env").write_text("META_API_KEY=from-file\nMETA_MODEL=file-model\n")
     load_dotenv(tmp_path / ".env")
-    assert Path  # silence
     import os
 
     assert os.environ["META_API_KEY"] == "from-env"

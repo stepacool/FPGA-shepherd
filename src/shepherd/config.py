@@ -69,7 +69,7 @@ def load(root: Path) -> ProjectConfig:
 
     sources = data.get("sources")
     if sources is None:
-        raise ConfigError(f"{CONFIG_NAME}: 'sources' is required (list of HDL files or globs)")
+        sources = []
     if isinstance(sources, str):
         sources = [sources]
     if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
@@ -82,6 +82,11 @@ def load(root: Path) -> ProjectConfig:
     adapters = data.get("adapters", {})
     if not isinstance(adapters, dict):
         raise ConfigError(f"{CONFIG_NAME}: '[adapters]' must be a table")
+    if not sources and not adapters:
+        raise ConfigError(
+            f"{CONFIG_NAME}: 'sources' is empty and no [adapters] entry is set",
+            hint="add HDL sources or an [adapters.amaranth] entry",
+        )
 
     checks = data.get("checks", {})
     if not isinstance(checks, dict):

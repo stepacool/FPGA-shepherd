@@ -177,16 +177,50 @@ def _run_pipeline(ctx: typer.Context, command: str, flash: bool = False) -> None
 
 @app.command()
 def doctor(
+    ctx: typer.Context,
     fix: Annotated[bool, typer.Option("--fix", help="Propose and apply fixes.")] = False,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Check the environment: toolchain, drivers, connected board, project."""
-    _not_implemented("doctor")
+    from shepherd.doctor import run_doctor
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    try:
+        report = run_doctor(sctx, Output(sctx), fix=fix)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    if any(i.status == "fail" for i in report.items):
+        raise typer.Exit(EXIT_FAIL)
 
 
 @app.command()
 def init(
     ctx: typer.Context,
     path: Annotated[Path | None, typer.Argument(help="Project folder (default: current).")] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing shepherd.toml.")
+    ] = False,
+    top: Annotated[
+        str | None, typer.Option("--top", help="Top module name when several candidates exist.")
+    ] = None,
     no_ai: _NoAi = False,
     no_check: _NoCheck = False,
     yes: _Yes = False,
@@ -213,7 +247,7 @@ def init(
     if path is not None:
         sctx.project = path.resolve()
     try:
-        run_init(sctx, Output(sctx), path)
+        run_init(sctx, Output(sctx), path, force=force, top=top)
     except ShepherdError as e:
         _print_error(e)
         raise typer.Exit(e.exit_code) from e
@@ -276,32 +310,126 @@ def upload(
     _run_pipeline(ctx, "upload", flash=flash)
 
 
+def _run_secondary(ctx: typer.Context, command: str, testbench: str | None = None) -> None:
+    from shepherd.secondary import run_secondary
+
+    sctx: Context = ctx.obj
+    try:
+        code = run_secondary(sctx, Output(sctx), command, testbench=testbench)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
 @app.command()
-def lint() -> None:
+def lint(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+) -> None:
     """Lint the HDL sources."""
-    _not_implemented("lint")
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    _run_secondary(ctx, "lint")
 
 
 @app.command()
 def sim(
+    ctx: typer.Context,
     testbench: Annotated[str | None, typer.Argument(help="Testbench to simulate.")] = None,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
-    """Simulate a testbench and save the waveform."""
-    _not_implemented("sim")
+    """Simulate a testbench and save the waveform (no GUI)."""
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    _run_secondary(ctx, "sim", testbench)
 
 
 @app.command()
 def test(
+    ctx: typer.Context,
     testbench: Annotated[str | None, typer.Argument(help="Run only this testbench.")] = None,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
 ) -> None:
     """Run testbenches (files named *_tb.v / *_tb.sv)."""
-    _not_implemented("test")
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    _run_secondary(ctx, "test", testbench)
 
 
 @app.command()
-def report() -> None:
+def report(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+) -> None:
     """Report utilization and timing (fmax)."""
-    _not_implemented("report")
+    _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+    )
+    _run_secondary(ctx, "report")
 
 
 @app.command()

@@ -47,6 +47,7 @@ def _print_verdict(out: Output, findings: list[Finding], log_hint: str | None) -
 
 
 def run_explain(ctx: Context, out: Output, log: Path | None) -> int:
+    """Diagnose a log file or the latest failed run; return process exit code."""
     agent = VerifyAgent()
     if log is not None:
         path = log.expanduser().resolve()
@@ -91,6 +92,7 @@ def run_explain(ctx: Context, out: Output, log: Path | None) -> int:
 
 
 def run_check(ctx: Context, out: Output, stage: str) -> int:
+    """Re-run checkpoint + VerifyAgent for one stage of the last run."""
     root, cfg = _load_cfg(ctx)
     if root is None or cfg is None:
         raise ConfigError(

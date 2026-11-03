@@ -61,7 +61,7 @@ def test_version():
     assert result.output.startswith("shepherd ")
 
 
-@pytest.mark.parametrize("args", [["doctor"], ["lint"], ["report"], ["ui"]])
+@pytest.mark.parametrize("args", [["ui"]])
 def test_unimplemented_commands_exit_2(args):
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 2
@@ -175,7 +175,7 @@ def test_global_flags_land_on_context(tmp_path: Path, monkeypatch):
         str(tmp_path),
         "--run-id",
         "r1",
-        "doctor",
+        "ui",
     ]
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 0, result.output

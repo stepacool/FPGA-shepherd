@@ -1,0 +1,2 @@
+IO_LOC "clk" 52;
+IO_LOC "led" 9999;

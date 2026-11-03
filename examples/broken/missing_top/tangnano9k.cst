@@ -1,0 +1,3 @@
+// Intentionally missing IO_LOC for led[*] — used to demo VerifyAgent.
+IO_LOC "clk" 52;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;

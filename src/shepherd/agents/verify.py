@@ -47,6 +47,7 @@ class VerifyAgent:
         allow_ai: bool = False,
         step: str | None = None,
     ) -> Verdict:
+        """Produce a verdict from checkpoint findings, signatures, and optional AI."""
         findings = list(checkpoint_findings or [])
         combined = "\n".join(logs.values())
         constraints = cfg.constraints if cfg else None

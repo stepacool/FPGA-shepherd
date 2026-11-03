@@ -102,8 +102,36 @@ class Backend(Protocol):
 
     def upload(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult: ...
 
+    def lint(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult: ...
+
+    def sim(
+        self,
+        staging: Staging,
+        log_path: Path | None,
+        sink: StepSink,
+        testbench: str | None = None,
+    ) -> StepResult: ...
+
+    def test(
+        self,
+        staging: Staging,
+        log_path: Path | None,
+        sink: StepSink,
+        testbench: str | None = None,
+    ) -> StepResult: ...
+
+    def report(self, staging: Staging, log_path: Path | None, sink: StepSink) -> StepResult: ...
+
     def ensure_toolchain(self, sink: StepSink) -> StepResult:
         """Install/verify backend toolchain packages (may need internet)."""
+        ...
+
+    def devices(self) -> list[str]:
+        """Return connected programmer/device summary lines (Shepherd terms)."""
+        ...
+
+    def install_drivers(self, kind: str = "ftdi") -> list[str]:
+        """Return shell commands the user should run to install drivers (may need sudo)."""
         ...
 
     def passthrough(self, args: list[str], cwd: Path) -> int: ...

@@ -175,6 +175,10 @@ class Pipeline:
         return config_mod.load(root)
 
     def run(self, command: str, *, flash: bool = False) -> PipelineResult:
+        """Run build or upload end-to-end and return a PipelineResult."""
+        from shepherd import adapters
+        from shepherd.config import STATE_DIR
+
         cfg = self._load()
         self.backend.resolve_board(cfg.board)
         sources = config_mod.resolve_sources(cfg)
@@ -184,11 +188,19 @@ class Pipeline:
                 "no pin constraints file (*.cst) found",
                 hint=f'add one and set `constraints = "..."` in {config_mod.CONFIG_NAME}',
             )
+        adapter = adapters.select(cfg, sources)
+        if adapter is not None and not self.ctx.dry_run:
+            # Outside the staged backend project so generated .v is not globbed twice.
+            gen_dir = cfg.root / STATE_DIR / "gen"
+            gen_dir.mkdir(parents=True, exist_ok=True)
+            sources = adapter.emit(cfg, sources, gen_dir)
+        elif adapter is not None:
+            sources = adapter.emit(cfg, sources, cfg.root / STATE_DIR / "gen")
         staging = self.backend.prepare(cfg, sources, constraints, flash=flash)
         rewrite = PathRewriter(staging.path_map, staging.dir, cfg.root)
         result = PipelineResult(command=command, board=cfg.board, run_id=None, verdict="pass")
-
-        self.out.headline(f"project: {hdl_label(sources)}, top={cfg.top}, board={cfg.board}")
+        label = adapter.name if adapter and adapter.name != "verilog" else hdl_label(sources)
+        self.out.headline(f"project: {label}, top={cfg.top}, board={cfg.board}")
 
         if self.ctx.dry_run:
             return self._dry_run(staging, rewrite, command, result)

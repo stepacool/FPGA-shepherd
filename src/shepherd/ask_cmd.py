@@ -17,6 +17,7 @@ class AskError(ShepherdError):
 
 
 def run_ask(ctx: Context, out: Output, question: str) -> int:
+    """Answer a project question with optional last-run context via the LLM."""
     if ctx.no_ai:
         raise AskError("AI is disabled (`--no-ai`)", hint="omit `--no-ai` to ask")
     root = config_mod.find_project_root(ctx.project)

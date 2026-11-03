@@ -55,6 +55,7 @@ class CheckContext:
 
 
 def check(stage: str, ctx: CheckContext) -> CheckResult:
+    """Run the deterministic checkpoint for a pipeline stage."""
     handlers = {
         "adapter": _check_adapter,
         "synth": _check_synth,
@@ -137,6 +138,16 @@ def _check_adapter(ctx: CheckContext) -> CheckResult:
                 fix=f"set `top` in shepherd.toml to a module that exists, or add `module {top}`",
             )
         )
+
+    from shepherd.adapters.verilog import scan_sv_subset
+
+    staged_sources = [
+        target
+        for name, target in staging.links.items()
+        if name.startswith("src/") and target.is_file()
+    ]
+    for msg in scan_sv_subset(staged_sources):
+        findings.append(Finding(msg, cause=msg, fix="remove or rewrite the unsupported construct"))
 
     if findings:
         return CheckResult(False, findings[0].message, findings)

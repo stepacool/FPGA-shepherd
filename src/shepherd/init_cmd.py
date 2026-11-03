@@ -66,6 +66,24 @@ def _confirm_scaffold(out: Output, plan: skeleton.ScaffoldPlan, *, yes: bool) ->
         )
 
 
+def _resolve_top(
+    out: Output, proposal: adopt.Proposal, *, top: str | None, yes: bool
+) -> adopt.Proposal:
+    if top is not None:
+        return adopt.with_top(proposal, top) if proposal.cfg else proposal
+    if not proposal.top_candidates or len(proposal.top_candidates) <= 1:
+        return proposal
+    if yes:
+        listing = ", ".join(proposal.top_candidates)
+        raise ConfigError(
+            f"several possible top modules: {listing}",
+            hint="pass `--top NAME` or edit shepherd.toml after init",
+        )
+    out.detail(f"several possible tops: {', '.join(proposal.top_candidates)}")
+    choice = typer.prompt("Which top module?", default=proposal.top_candidates[0])
+    return adopt.with_top(proposal, choice.strip())
+
+
 def _apply_scaffold(
     ctx: Context, out: Output, root: Path, plan: skeleton.ScaffoldPlan
 ) -> adopt.Proposal:
@@ -106,20 +124,29 @@ def _write_toml(ctx: Context, out: Output, cfg: config_mod.ProjectConfig) -> boo
     return True
 
 
-def run_init(ctx: Context, out: Output, path: Path | None = None) -> InitResult:
+def run_init(
+    ctx: Context,
+    out: Output,
+    path: Path | None = None,
+    *,
+    force: bool = False,
+    top: str | None = None,
+) -> InitResult:
+    """Adopt or scaffold a project, install the toolchain, and print next steps."""
     root = (path or ctx.project).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
     out.headline(f"project: {display_path(root)}")
-    proposal = adopt.propose(root)
+    proposal = adopt.propose(root, top=top, yes=ctx.yes, force=force)
     scaffolded = False
 
     if proposal.needs_scaffold:
         plan = skeleton.plan(root)
         proposal = _apply_scaffold(ctx, out, root, plan)
         scaffolded = not ctx.dry_run
-        wrote = scaffolded  # toml included in scaffold
+        wrote = scaffolded
     elif proposal.created:
+        proposal = _resolve_top(out, proposal, top=top, yes=ctx.yes)
         assert proposal.cfg is not None
         wrote = _write_toml(ctx, out, proposal.cfg)
     else:
@@ -135,6 +162,9 @@ def run_init(ctx: Context, out: Output, path: Path | None = None) -> InitResult:
         out.detail(f"constraints={cfg.constraints}")
     for note in proposal.notes:
         out.detail(note, "dim")
+
+    if not ctx.dry_run and adopt.ensure_gitignore(root):
+        out.detail("updated .gitignore (.shepherd/)", "dim")
 
     backend = get_backend(dry_run=ctx.dry_run)
     out.headline("toolchain")
@@ -157,7 +187,9 @@ def run_init(ctx: Context, out: Output, path: Path | None = None) -> InitResult:
         )
 
     out.detail("packages ready" if not ctx.dry_run else "would install toolchain packages", "dim")
-    out.detail("if the board is not detected later: shepherd doctor --fix", "dim")
+    out.headline("next")
+    out.detail("shepherd build")
+    out.detail("shepherd doctor   # if the board or toolchain looks wrong", "dim")
 
     result = InitResult(
         project=str(root),

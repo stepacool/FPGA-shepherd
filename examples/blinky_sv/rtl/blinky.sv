@@ -11,7 +11,7 @@ module blinky #(
   logic [5:0] count = '0;
 
   always_ff @(posedge clk) begin
-    if (div == TICKS - 1) begin
+    if (div == $bits(div)'(TICKS - 1)) begin
       div   <= '0;
       count <= count + 1'b1;
     end else begin
