@@ -25,6 +25,14 @@ def test_seed_signatures_match_fixtures():
         assert matches[0].cause and matches[0].fix
 
 
+def test_unconstrained_obuf_port_normalized():
+    text = (FIXTURES / "build_pnr_unconstrained.log").read_text()
+    matches = match_log(text, constraints="tangnano9k.cst")
+    assert matches[0].groups["port"] == "led[5]"
+    assert "led[5]" in matches[0].cause
+    assert "OBUF" not in matches[0].cause
+
+
 def test_verify_agent_on_unconstrained_log():
     text = (FIXTURES / "build_pnr_unconstrained.log").read_text()
     verdict = VerifyAgent().explain_text(text)
@@ -60,3 +68,9 @@ def test_pipeline_fail_prints_signature_cause(project: Path, monkeypatch):
     assert result.exit_code == 1, result.output
     assert "cause:" in result.output
     assert "fix:" in result.output
+    assert "led[5]" in result.output
+    assert "checkpoint" not in result.output
+    assert result.output.count("pnr") >= 1
+    # One FAIL banner for pnr — not a second "pnr FAIL checkpoint".
+    assert result.output.count("FAIL") >= 1
+    assert "FAIL checkpoint" not in result.output

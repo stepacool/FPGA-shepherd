@@ -66,9 +66,7 @@ def run_secondary(
             sink = _Sink(out, run, rewrite, command)
             method = getattr(backend, command)
             if command in {"sim", "test"}:
-                result = method(
-                    staging, log, sink, testbench=_staged_testbench(staging, testbench)
-                )
+                result = method(staging, log, sink, testbench=_staged_testbench(staging, testbench))
             else:
                 result = method(staging, log, sink)
             run.event(

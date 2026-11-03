@@ -65,6 +65,19 @@ def _from_entry(entry: dict[str, Any]) -> Signature:
     )
 
 
+_OBUF_PORT = re.compile(r"^(?P<base>[A-Za-z_][\w$]*?)_OBUF(?:_O(?:_(?P<idx>\d+))?)?$")
+
+
+def normalize_io_port(port: str) -> str:
+    """Map tool buffer names like `led_OBUF_O_5` back toward the design/CST net."""
+    m = _OBUF_PORT.fullmatch(port)
+    if not m:
+        return port
+    base = m.group("base")
+    idx = m.group("idx")
+    return f"{base}[{idx}]" if idx is not None else base
+
+
 def match_log(text: str, *, constraints: str | None = None) -> list[Match]:
     """Return signature matches for `text` (first match per tool; YAML order = priority)."""
     extras = {"constraints": constraints or "the constraints file (.cst)"}
@@ -78,6 +91,8 @@ def match_log(text: str, *, constraints: str | None = None) -> list[Match]:
         if m is None:
             continue
         groups = {k: v for k, v in m.groupdict().items() if v is not None}
+        if "port" in groups:
+            groups["port"] = normalize_io_port(groups["port"])
         seen_ids.add(sig.id)
         seen_tools.add(sig.tool)
         found.append(

@@ -75,20 +75,40 @@ shepherd init
 shepherd upload
 ```
 
+Use `-P` / `--project` when the project is not the current directory:
+
+```bash
+shepherd build -P examples/blinky_sv
+shepherd ask -P examples/blinky_sv "why are the LEDs active-low?"
+```
+
 If the board or toolchain looks wrong: `shepherd doctor --fix`.
 
 For AI-assisted `explain` / `ask`, set `META_API_KEY`.
 
+`sim` / `test` pick up sibling `*_tb.v` / `*_tb.sv` next to your sources automatically (you can still list them in `shepherd.toml`).
+
 ## Status
 
-Early development, CLI first, then an optional UI. Working now: `shepherd build` / `shepherd upload` (Verilog / SystemVerilog), `--dry-run`, `--show-backend`, `--json`, `-v`, run history in `.shepherd/shepherd.db`. Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18).
+Early development, CLI first, then an optional UI. Working now: `init`, `doctor`, `build` / `upload`, `lint` / `sim` / `test` / `report`, `explain` / `ask`, Amaranth adapter, run history in `.shepherd/shepherd.db`. Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18), [UI epic](https://github.com/FrankP89/FPGA-shepherd/issues/27).
 
 ## Develop
+
+Prefer `uv run shepherd` from this repo so you are not on a stale PATH install:
 
 ```bash
 uv sync
 uv run pytest
 uv run shepherd -P examples/blinky_sv build      # needs the toolchain; see `--dry-run` otherwise
+uv run shepherd -P examples/blinky_sv sim
+uv run shepherd -P examples/uart_amaranth build
+```
+
+Refresh the global `shepherd` on PATH from this checkout:
+
+```bash
+uv tool install --force --reinstall .
+# or: SHEPHERD_SOURCE=. bash scripts/install.sh
 ```
 
 Build backend: [apio](https://fpgawars.github.io/apio/docs) (FPGAwars). You don’t need to install or learn it separately.

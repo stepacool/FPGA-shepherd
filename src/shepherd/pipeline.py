@@ -218,7 +218,7 @@ class Pipeline:
                 if ok:
                     ok = self._backend_steps(command, staging, run, run_dir, rewrite, result, cfg)
                 if not self.ctx.no_check:
-                    ok = self._verify(cfg, run_dir, result, ok) and ok
+                    ok = self._verify(cfg, run_dir, result, ok, rewrite) and ok
                 result.verdict = "pass" if ok else "fail"
                 run.event(
                     "verdict",
@@ -319,6 +319,8 @@ class Pipeline:
                 run,
                 result,
                 log,
+                # Tool already printed → FAIL; don't add a second "checkpoint" banner.
+                announce=record.ok,
             )
             if not checked.ok:
                 self._report_failure(tracker, log, checked)
@@ -349,6 +351,7 @@ class Pipeline:
                 run,
                 result,
                 log,
+                announce=upload.ok,
             )
             if not checked.ok or not upload.ok:
                 self._report_failure(tracker, log, checked if not checked.ok else None)
@@ -362,6 +365,8 @@ class Pipeline:
         run: Run,
         result: PipelineResult,
         log: Path,
+        *,
+        announce: bool = True,
     ) -> CheckResult:
         if self.ctx.no_check:
             return CheckResult(True, "checks skipped")
@@ -385,17 +390,24 @@ class Pipeline:
                 message=checked.message,
                 payload={"findings": result.findings, "log": str(log)},
             )
-            self.out.step(stage, False, "checkpoint")
+            if announce:
+                self.out.step(stage, False, "checkpoint")
         return checked
 
     def _verify(
-        self, cfg: ProjectConfig, run_dir: RunDir, result: PipelineResult, ok_so_far: bool
+        self,
+        cfg: ProjectConfig,
+        run_dir: RunDir,
+        result: PipelineResult,
+        ok_so_far: bool,
+        rewrite: PathRewriter | None = None,
     ) -> bool:
         logs: dict[str, str] = {}
         for step in ("adapter", "build", "upload"):
             path = run_dir.log_path(step)
             if path.is_file():
-                logs[step] = path.read_text(errors="replace")
+                text = path.read_text(errors="replace")
+                logs[step] = rewrite(text) if rewrite else text
         checkpoint_findings = [
             Finding(
                 message=f["message"],
@@ -415,6 +427,7 @@ class Pipeline:
             checkpoint_findings=checkpoint_findings,
             allow_ai=allow_ai and not ok_so_far,
             step=result.command,
+            rewrite=rewrite,
         )
         # Prefer signature-enriched findings when present.
         if verdict.findings:

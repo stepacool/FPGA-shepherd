@@ -141,6 +141,16 @@ def resolve_sources(cfg: ProjectConfig) -> list[Path]:
                 warnings.warn(f"source '{path}' is outside the project folder", stacklevel=2)
             seen.add(path)
             result.append(path)
+    # Auto-include sibling *_tb.v / *_tb.sv so sim/test work without listing them.
+    extras: list[Path] = []
+    for path in result:
+        for tb in sorted(path.parent.glob("*_tb.v")) + sorted(path.parent.glob("*_tb.sv")):
+            resolved = tb.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            extras.append(resolved)
+    result.extend(extras)
     return result
 
 

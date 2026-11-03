@@ -26,7 +26,7 @@ PNR_FAIL_SCRIPT = [
     ("line", "yosys -p synth_gowin -json _build/default/hardware.json"),
     ("stage", "pnr"),
     ("line", "nextpnr-himbaechel --json _build/default/hardware.json"),
-    ("line", "ERROR: Unconstrained IO:led_OBUF_O"),
+    ("line", "ERROR: Unconstrained IO:led_OBUF_O_5"),
 ]
 
 
@@ -148,11 +148,11 @@ def test_build_fail_stops_and_reports(project: Path, capsys):
     ]
     out = capsys.readouterr().out
     assert "pnr" in out and "FAIL" in out
-    assert "Unconstrained IO:led_OBUF_O" in out
+    assert "Unconstrained IO:led_OBUF_O_5" in out
     assert "build.log" in out
     events = EventStore.open(project).events(result.run_id)
     errors = [e["message"] for e in events if e["kind"] == "log" and e["level"] == "error"]
-    assert errors == ["ERROR: Unconstrained IO:led_OBUF_O"]
+    assert errors == ["ERROR: Unconstrained IO:led_OBUF_O_5"]
     assert EventStore.open(project).latest_run()["verdict"] == "fail"
 
 

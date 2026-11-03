@@ -92,6 +92,16 @@ def test_glob_ignores_state_dir(tmp_path: Path):
     assert [p.name for p in sources] == ["a.v"]
 
 
+def test_resolve_sources_auto_includes_sibling_testbench(tmp_path: Path):
+    touch(tmp_path, "rtl/blinky.sv", "rtl/blinky_tb.sv")
+    write(
+        tmp_path,
+        'board = "tangnano9k"\ntop = "blinky"\nsources = ["rtl/blinky.sv"]\n',
+    )
+    names = [p.name for p in config.resolve_sources(config.load(tmp_path))]
+    assert names == ["blinky.sv", "blinky_tb.sv"]
+
+
 def test_constraints_autodetect(project: Path):
     cfg = config.load(project)
     assert config.resolve_constraints(cfg) == (project / "tangnano9k.cst").resolve()

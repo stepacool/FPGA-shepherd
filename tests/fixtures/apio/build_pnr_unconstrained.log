@@ -3,7 +3,7 @@ Setting shell vars.
 --------------------------------------------------------------------------------
 yosys -p "synth_gowin -top blinky -json _build/default/hardware.json " -q -DSYNTHESIZE blinky.v
 nextpnr-himbaechel --device GW1NR-LV9QN88PC6/I5 --json _build/default/hardware.json --write _build/default/hardware.pnr.json --report _build/default/hardware.pnr --vopt family=GW1N-9C --vopt cst=blinky.cst -q
-ERROR: Unconstrained IO:led_OBUF_O
+ERROR: Unconstrained IO:led_OBUF_O_5
 0 warnings, 1 error
 scons: *** [_build/default/hardware.pnr.json] Error 255
 ========================== [ERROR] Took 0.53 seconds ===========================

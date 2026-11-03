@@ -26,3 +26,17 @@ def test_does_not_rewrite_partial_matches(tmp_path: Path):
 
 def test_empty_map():
     assert PathRewriter({}, Path("/s"), Path("/"))("x") == "x"
+
+
+def test_verify_agent_rewrites_staged_paths_in_cause(tmp_path: Path):
+    from shepherd.agents.verify import VerifyAgent
+
+    stage = tmp_path / ".shepherd" / "build"
+    user = tmp_path / "rtl" / "blinky.sv"
+    rewrite = PathRewriter({stage / "src/000_blinky.sv": user}, stage, tmp_path)
+    log = "src/000_blinky.sv:3: ERROR: syntax error, unexpected TOK_BEGIN\n"
+    verdict = VerifyAgent().run(cfg=None, logs={"build": log}, rewrite=rewrite)
+    assert verdict.level == "fail"
+    joined = " ".join((f.cause or "") + " " + (f.fix or "") for f in verdict.findings)
+    assert "rtl/blinky.sv" in joined
+    assert "src/000_blinky.sv" not in joined

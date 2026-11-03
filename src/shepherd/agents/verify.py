@@ -46,20 +46,35 @@ class VerifyAgent:
         checkpoint_findings: list[Finding] | None = None,
         allow_ai: bool = False,
         step: str | None = None,
+        rewrite: Callable[[str], str] | None = None,
     ) -> Verdict:
         """Produce a verdict from checkpoint findings, signatures, and optional AI."""
         findings = list(checkpoint_findings or [])
+        if rewrite is not None:
+            logs = {k: rewrite(v) for k, v in logs.items()}
+            findings = [
+                Finding(
+                    message=rewrite(f.message),
+                    level=f.level,
+                    id=f.id,
+                    cause=rewrite(f.cause) if f.cause else None,
+                    fix=rewrite(f.fix) if f.fix else None,
+                )
+                for f in findings
+            ]
         combined = "\n".join(logs.values())
         constraints = cfg.constraints if cfg else None
         matches = match_log(combined, constraints=constraints)
         for m in matches:
+            cause = rewrite(m.cause) if rewrite else m.cause
+            fix = rewrite(m.fix) if rewrite else m.fix
             findings.append(
                 Finding(
-                    message=m.cause,
+                    message=cause,
                     level=m.level,
                     id=m.signature.id,
-                    cause=m.cause,
-                    fix=m.fix,
+                    cause=cause,
+                    fix=fix,
                 )
             )
 
