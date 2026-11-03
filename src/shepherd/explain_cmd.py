@@ -57,6 +57,8 @@ def run_explain(ctx: Context, out: Output, log: Path | None) -> int:
         root, cfg = _load_cfg(ctx)
         verdict = agent.explain_text(text, cfg=cfg)
         _print_verdict(out, verdict.findings, display_path(path))
+        if root is not None and not ctx.dry_run:
+            _record_explain_run(ctx, root, cfg.board if cfg else None, verdict)
         return 0 if verdict.level == "pass" else 1
 
     root, cfg = _load_cfg(ctx)
@@ -86,9 +88,62 @@ def run_explain(ctx: Context, out: Output, log: Path | None) -> int:
         verdict = agent.run(cfg=cfg, logs=logs, allow_ai=False)
         hint = display_path(run_dir.log_path("build" if "build" in logs else next(iter(logs))))
         _print_verdict(out, verdict.findings, hint)
+        _record_explain_run(ctx, root, cfg.board if cfg else None, verdict, store=store)
         return 0 if verdict.level == "pass" else 1
     finally:
         store.close()
+
+
+def _record_explain_run(ctx, root, board, verdict, store: EventStore | None = None) -> None:
+    """Write explain findings under ctx.run_id so the UI poller can display them."""
+    from shepherd.events.db import new_run_id
+
+    if ctx.dry_run:
+        return
+    own = store is None
+    if store is None:
+        store = EventStore.open(root)
+    try:
+        run = store.start_run(
+            "explain",
+            board=board,
+            run_id=ctx.run_id or new_run_id(),
+        )
+        run.event("step_start", step="explain")
+        payload = {
+            "findings": [
+                {
+                    "id": f.id,
+                    "level": f.level,
+                    "message": f.message,
+                    "cause": f.cause,
+                    "fix": f.fix,
+                }
+                for f in verdict.findings
+            ]
+        }
+        run.event(
+            "verdict",
+            step="explain",
+            level="error" if verdict.level == "fail" else "info",
+            message=verdict.level,
+            payload=payload,
+        )
+        for f in verdict.findings:
+            if f.cause:
+                run.event("log", step="explain", level=f.level, message=f"cause: {f.cause}")
+            if f.fix:
+                run.event("log", step="explain", level="info", message=f"fix:   {f.fix}")
+        run.event(
+            "step_end",
+            step="explain",
+            level="error" if verdict.level == "fail" else "info",
+            payload={"ok": verdict.level != "fail"},
+        )
+        run.finish("fail" if verdict.level == "fail" else "pass")
+    finally:
+        if own:
+            store.close()
 
 
 def run_check(ctx: Context, out: Output, stage: str) -> int:

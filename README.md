@@ -1,5 +1,7 @@
 # FPGA Shepherd
 
+[![ci](https://github.com/FrankP89/FPGA-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/FrankP89/FPGA-shepherd/actions/workflows/ci.yml)
+
 Shepherd speeds up adoption of complex chips like **FPGAs** (field-programmable gate arrays), so getting real hardware into the loop for **physical AI** is simpler.
 
 You bring the design. Shepherd helps with setup, build, board bring-up, and figuring out what went wrong.
@@ -90,7 +92,7 @@ For AI-assisted `explain` / `ask`, set `META_API_KEY`.
 
 ## Status
 
-Early development, CLI first, then an optional UI. Working now: `init`, `doctor`, `build` / `upload`, `lint` / `sim` / `test` / `report`, `explain` / `ask`, Amaranth adapter, run history in `.shepherd/shepherd.db`. Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18), [UI epic](https://github.com/FrankP89/FPGA-shepherd/issues/27).
+Early development. Working now: `init`, `doctor`, `build` / `upload`, `lint` / `sim` / `test` / `report`, `explain` / `ask`, Amaranth adapter, run history in `.shepherd/shepherd.db`, and a Next.js control room in `web/` (`shepherd ui` / `shepherd ui stop` / `restart`). Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18), [UI epic](https://github.com/FrankP89/FPGA-shepherd/issues/27). Spawn contract: [`docs/ui-spawn.md`](docs/ui-spawn.md).
 
 ## Develop
 

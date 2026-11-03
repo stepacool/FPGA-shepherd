@@ -10,6 +10,15 @@ endmodule
 """
 
 
+@pytest.fixture(autouse=True)
+def _plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Typer/Rich help text free of ANSI so string asserts stay stable in CI/TTY."""
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("CLICOLOR_FORCE", raising=False)
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A minimal valid Shepherd project."""

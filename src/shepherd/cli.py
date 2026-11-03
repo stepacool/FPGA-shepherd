@@ -100,11 +100,6 @@ def main_callback(
         raise typer.Exit()
 
 
-def _not_implemented(name: str) -> None:
-    Console(stderr=True).print(f"shepherd {name}: not implemented yet")
-    raise typer.Exit(EXIT_USAGE)
-
-
 def _apply_command_flags(
     ctx: typer.Context,
     *,
@@ -116,6 +111,7 @@ def _apply_command_flags(
     show_backend: bool = False,
     verbose: bool = False,
     project: Path | None = None,
+    run_id: str | None = None,
 ) -> Context:
     """Merge flags passed after the subcommand into the shared Context (OR with root flags)."""
     global _current
@@ -136,6 +132,8 @@ def _apply_command_flags(
         sctx.verbose = True
     if project is not None:
         sctx.project = project.resolve()
+    if run_id is not None:
+        sctx.run_id = run_id
     _current = sctx
     return sctx
 
@@ -160,6 +158,10 @@ _Verbose = Annotated[bool, typer.Option("--verbose", "-v", help="Stream raw tool
 _Project = Annotated[
     Path | None,
     typer.Option("--project", "-P", help="Project folder (default: current folder)."),
+]
+_RunId = Annotated[
+    str | None,
+    typer.Option("--run-id", hidden=True),
 ]
 
 
@@ -187,6 +189,7 @@ def doctor(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Check the environment: toolchain, drivers, connected board, project."""
     from shepherd.doctor import run_doctor
@@ -201,6 +204,7 @@ def doctor(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     try:
         report = run_doctor(sctx, Output(sctx), fix=fix)
@@ -229,6 +233,7 @@ def init(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Set up a project: write or adopt shepherd.toml and install the toolchain."""
     from shepherd.init_cmd import run_init
@@ -243,6 +248,7 @@ def init(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     if path is not None:
         sctx.project = path.resolve()
@@ -264,6 +270,7 @@ def build(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Build the bitstream: HDL adapter, synth, place and route, pack, verify."""
     _apply_command_flags(
@@ -276,6 +283,7 @@ def build(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_pipeline(ctx, "build")
 
@@ -294,6 +302,7 @@ def upload(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Build and program the board (SRAM by default)."""
     _apply_command_flags(
@@ -306,6 +315,7 @@ def upload(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_pipeline(ctx, "upload", flash=flash)
 
@@ -333,6 +343,7 @@ def lint(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Lint the HDL sources."""
     _apply_command_flags(
@@ -345,6 +356,7 @@ def lint(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_secondary(ctx, "lint")
 
@@ -361,6 +373,7 @@ def sim(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Simulate a testbench and save the waveform (no GUI)."""
     _apply_command_flags(
@@ -373,6 +386,7 @@ def sim(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_secondary(ctx, "sim", testbench)
 
@@ -389,6 +403,7 @@ def test(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Run testbenches (files named *_tb.v / *_tb.sv)."""
     _apply_command_flags(
@@ -401,6 +416,7 @@ def test(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_secondary(ctx, "test", testbench)
 
@@ -416,6 +432,7 @@ def report(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Report utilization and timing (fmax)."""
     _apply_command_flags(
@@ -428,6 +445,7 @@ def report(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     _run_secondary(ctx, "report")
 
@@ -444,6 +462,7 @@ def check(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Re-run the checkpoint and verification for a stage of the last run."""
     from shepherd.explain_cmd import run_check
@@ -458,6 +477,7 @@ def check(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     try:
         code = run_check(sctx, Output(sctx), stage.value)
@@ -479,6 +499,7 @@ def explain(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Diagnose the last failure, or any log file."""
     from shepherd.explain_cmd import run_explain
@@ -493,6 +514,7 @@ def explain(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     try:
         code = run_explain(sctx, Output(sctx), log)
@@ -514,6 +536,7 @@ def ask(
     show_backend: _ShowBackend = False,
     verbose: _Verbose = False,
     project: _Project = None,
+    run_id: _RunId = None,
 ) -> None:
     """Ask a question with the project and last run as context."""
     from shepherd.ask_cmd import run_ask
@@ -528,6 +551,7 @@ def ask(
         show_backend=show_backend,
         verbose=verbose,
         project=project,
+        run_id=run_id,
     )
     try:
         code = run_ask(sctx, Output(sctx), question)
@@ -537,10 +561,96 @@ def ask(
     raise typer.Exit(code)
 
 
-@app.command()
-def ui() -> None:
-    """Open the live web view for this project (optional)."""
-    _not_implemented("ui")
+ui_app = typer.Typer(
+    name="ui",
+    help="Live web control room: start (default), stop, or restart.",
+    context_settings=CONTEXT_SETTINGS,
+    invoke_without_command=True,
+    add_completion=False,
+)
+app.add_typer(ui_app, name="ui")
+
+
+@ui_app.callback(invoke_without_command=True)
+def ui(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="Port for the Next.js app.")] = 3010,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Open the live web view (installs/builds `web/` on first use)."""
+    from shepherd.ui_cmd import UiError, start_ui
+
+    sctx = _apply_command_flags(ctx, project=project, run_id=run_id)
+    if ctx.invoked_subcommand is not None:
+        return
+
+    try:
+        code = start_ui(sctx, Output(sctx), port=port)
+    except UiError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@ui_app.command("start")
+def ui_start(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="Port for the Next.js app.")] = 3010,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Start the web UI (same as bare `shepherd ui`)."""
+    from shepherd.ui_cmd import UiError, start_ui
+
+    sctx = _apply_command_flags(ctx, project=project, run_id=run_id)
+    try:
+        code = start_ui(sctx, Output(sctx), port=port)
+    except UiError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@ui_app.command("stop")
+def ui_stop(
+    ctx: typer.Context,
+    port: Annotated[
+        int | None,
+        typer.Option(help="Port to check after stop (default: from pid file)."),
+    ] = None,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Stop the background web UI started by `shepherd ui`."""
+    from shepherd.ui_cmd import UiError, stop_ui
+
+    sctx = _apply_command_flags(ctx, project=project, run_id=run_id)
+    try:
+        code = stop_ui(sctx, Output(sctx), port=port)
+    except UiError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@ui_app.command("restart")
+def ui_restart(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="Port for the Next.js app.")] = 3010,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Stop then start the web UI."""
+    from shepherd.ui_cmd import UiError, restart_ui
+
+    sctx = _apply_command_flags(ctx, project=project, run_id=run_id)
+    try:
+        code = restart_ui(sctx, Output(sctx), port=port)
+    except UiError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
 
 
 @app.command("help")

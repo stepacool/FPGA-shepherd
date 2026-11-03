@@ -227,11 +227,13 @@ def run_doctor(ctx: Context, out: Output, *, fix: bool = False) -> DoctorReport:
             run = store.start_run("doctor", board=None, run_id=ctx.run_id or new_run_id())
         for item in items:
             if run:
+                # Event levels are info|warn|error (not ok/fail).
+                level = {"ok": "info", "warn": "warn", "fail": "error"}.get(item.status, "info")
                 run.event("step_start", step=item.id)
                 run.event(
                     "step_end",
                     step=item.id,
-                    level="info" if item.status == "ok" else item.status,
+                    level=level,
                     message=item.message,
                     payload={"status": item.status, "fix": item.fix},
                 )

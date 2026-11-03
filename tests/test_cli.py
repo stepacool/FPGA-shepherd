@@ -10,6 +10,13 @@ from shepherd import cli
 
 runner = CliRunner()
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI.sub("", text)
+
+
 COMMANDS = [
     "doctor",
     "init",
@@ -31,14 +38,15 @@ COMMANDS = [
 def test_top_level_help(args):
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 0
-    assert "Usage: shepherd" in result.output
+    out = _plain(result.output)
+    assert "Usage: shepherd" in out
     for name in ("build", "upload", "doctor", "init"):
-        assert name in result.output
+        assert name in out
 
 
 def test_backend_command_hidden_from_help():
     result = runner.invoke(cli.app, ["--help"])
-    assert re.search(r"^\W*backend\s", result.output, re.MULTILINE) is None
+    assert re.search(r"^\W*backend\s", _plain(result.output), re.MULTILINE) is None
 
 
 @pytest.mark.parametrize("command", COMMANDS)
@@ -46,8 +54,9 @@ def test_command_help_has_no_backend_leak(command):
     for args in ([command, "--help"], [command, "-h"], ["help", command]):
         result = runner.invoke(cli.app, args)
         assert result.exit_code == 0, (args, result.output)
-        assert f"shepherd {command}" in result.output
-        assert "apio" not in result.output.lower()
+        out = _plain(result.output)
+        assert f"shepherd {command}" in out
+        assert "apio" not in out.lower()
 
 
 def test_help_unknown_command():
@@ -59,13 +68,6 @@ def test_version():
     result = runner.invoke(cli.app, ["--version"])
     assert result.exit_code == 0
     assert result.output.startswith("shepherd ")
-
-
-@pytest.mark.parametrize("args", [["ui"]])
-def test_unimplemented_commands_exit_2(args):
-    result = runner.invoke(cli.app, args)
-    assert result.exit_code == 2
-    assert "not implemented yet" in result.output
 
 
 def test_explain_help_has_no_backend_leak():
@@ -162,7 +164,12 @@ def test_init_scaffold_cancelled(tmp_path: Path, monkeypatch):
 
 def test_global_flags_land_on_context(tmp_path: Path, monkeypatch):
     seen = {}
-    monkeypatch.setattr(cli, "_not_implemented", lambda name: seen.update(ctx=cli._current))
+
+    def fake_doctor(ctx, out, *, fix=False):
+        seen["ctx"] = ctx
+        return type("R", (), {"ok": True, "items": [], "fixed": []})()
+
+    monkeypatch.setattr("shepherd.doctor.run_doctor", fake_doctor)
     args = [
         "--no-ai",
         "--no-check",
@@ -175,7 +182,7 @@ def test_global_flags_land_on_context(tmp_path: Path, monkeypatch):
         str(tmp_path),
         "--run-id",
         "r1",
-        "ui",
+        "doctor",
     ]
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 0, result.output

@@ -34,6 +34,19 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# ROS Humble injects broken pytest11 entry points into system site-packages
+# (launch_testing needs `lark`, launch_ros pending-hook mismatch). Disable them
+# so plain `uv run pytest` works on ROS-equipped developer machines.
+addopts = [
+    "-p", "no:launch_testing",
+    "-p", "no:launch_ros",
+    "-p", "no:ament_copyright",
+    "-p", "no:ament_lint",
+    "-p", "no:ament_flake8",
+    "-p", "no:ament_pep257",
+    "-p", "no:ament_xmllint",
+    "-p", "no:colcon_core_warnings_stderr",
+]
 markers = [
     "toolchain: needs a local FPGA toolchain (yosys/nextpnr); skipped in default CI",
 ]
