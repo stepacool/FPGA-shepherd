@@ -26,8 +26,10 @@ uv run --directory <repo-root> shepherd <command> [args…] --yes -P <abs-projec
 - UI allocates `run-id` first so Cancel can bind before the first DB row.
 - Always `--yes`.
 - Optional `--show-backend` when Advanced is on.
-- Allowed commands: `build`, `upload`, `doctor`, `explain`, `ask`, `sim`, `lint`, `test`, `report`.
-- **Gate:** `upload` / `sim` / `test` / `report` require a prior successful `build` (or an on-disk `hardware.fs`). The UI disables those buttons until then; the spawn API enforces the same rule.
+- Allowed commands: `build`, `upload`, `verify`, `reset`, `doctor`, `explain`, `ask`, `sim`, `lint`, `test`, `report`.
+- **Gate:** `upload` / `sim` / `test` / `report` require a prior successful `build` (or an on-disk `hardware.fs`). `verify` requires a prior successful `upload`. The UI also keeps session `Built` / `Uploaded` flags (off by default; cleared on fail or source change).
+- **`reset`:** resets the FPGA (clears SRAM program on the board). Toolbar **Reset** button.
+- **`ask wipe`:** wipes `.shepherd/shepherd.db` and `.shepherd/runs/` (Ask / explain / verify history). Keeps `.shepherd/build/` and `.shepherd/gen/`. Ask panel **Clear** control spawns `ask` with args `["wipe"]`. After success the UI resets the Ask Q+A.
 
 Implementation: [`web/src/lib/spawnShepherd.ts`](../web/src/lib/spawnShepherd.ts).
 
@@ -52,3 +54,7 @@ uv run shepherd ui restart -P examples/blinky_sv
 
 Node ≥ 20 recommended (`nvm use 20`). First run may take ~1 minute (`npm install` + `npm run build`).
 Pid recorded in `web/.shepherd-ui.json`.
+
+### Waveforms (Surfer)
+
+After `shepherd sim`, the UI Artifacts tab embeds **Surfer** for `.vcd` artifact paths (DB stores the path only). VCD bytes are served by `GET /api/artifact?project=…&path=…`. Surfer WASM is fetched into `web/public/surfer/` via `npm run surfer` (also runs on `npm run build` / first `shepherd ui`).

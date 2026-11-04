@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { activeRun, latestRun, latestSuccessfulBuild } from "@/lib/db";
-import { hasBitstream } from "@/lib/paths";
+import { hasBitstream, sourcesStamp } from "@/lib/paths";
 import { lockStatus } from "@/lib/spawnShepherd";
 import { readProjectToml } from "@/lib/toml";
 
@@ -19,11 +19,13 @@ export async function GET(req: Request) {
     const lock = lockStatus(project);
     const lastBuildOk = latestSuccessfulBuild(project);
     const buildReady = lastBuildOk != null || hasBitstream(project);
+    const stamp = sourcesStamp(project, toml.sources);
     return NextResponse.json({
       project,
       board: toml.board,
       top: toml.top,
       sources: toml.sources,
+      sourcesStamp: stamp,
       latest,
       active,
       lock,

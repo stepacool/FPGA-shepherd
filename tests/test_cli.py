@@ -27,6 +27,8 @@ COMMANDS = [
     "test",
     "report",
     "check",
+    "verify",
+    "reset",
     "explain",
     "ask",
     "ui",

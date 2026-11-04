@@ -488,6 +488,78 @@ def check(
 
 
 @app.command()
+def verify(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Verify the last upload (or build) using logs and checkpoints."""
+    from shepherd.explain_cmd import run_verify
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+        run_id=run_id,
+    )
+    try:
+        code = run_verify(sctx, Output(sctx))
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@app.command()
+def reset(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Reset the FPGA and clear the SRAM program on the board."""
+    from shepherd.reset_cmd import run_reset
+
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=no_ai,
+        no_check=no_check,
+        yes=yes,
+        json_out=json_out,
+        dry_run=dry_run,
+        show_backend=show_backend,
+        verbose=verbose,
+        project=project,
+        run_id=run_id,
+    )
+    try:
+        code = run_reset(sctx, Output(sctx))
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@app.command()
 def explain(
     ctx: typer.Context,
     log: Annotated[Path | None, typer.Argument(help="Log file (default: last failed run).")] = None,
@@ -524,10 +596,79 @@ def explain(
     raise typer.Exit(code)
 
 
-@app.command()
-def ask(
+class _AskGroup(typer.core.TyperGroup):
+    """`ask wipe` is a subcommand; any other tokens are the question text."""
+
+    def resolve_command(self, ctx: typer.Context, args: list[str]):
+        if args and args[0] in self.list_commands(ctx):
+            return super().resolve_command(ctx, args)
+        # Route free-form questions through the hidden `__question__` command.
+        return super().resolve_command(ctx, ["__question__", *args])
+
+
+ask_app = typer.Typer(
+    name="ask",
+    help="Ask a question about the project, or wipe Ask / run history.",
+    context_settings=CONTEXT_SETTINGS,
+    invoke_without_command=True,
+    add_completion=False,
+    cls=_AskGroup,
+)
+app.add_typer(ask_app, name="ask")
+
+
+@ask_app.callback(invoke_without_command=True)
+def ask_callback(
     ctx: typer.Context,
-    question: Annotated[str, typer.Argument(help="Your question.")],
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Ask a question about the project, or wipe Ask / run history.
+
+    Examples: `shepherd ask "why are LEDs active-low?"` · `shepherd ask wipe`
+    """
+    # Options on the group so `ask -P … wipe` / `ask -P … "question"` parse cleanly.
+    _ = (no_ai, no_check, yes, json_out, dry_run, show_backend, verbose, project, run_id)
+    if ctx.invoked_subcommand is not None:
+        return
+    typer.echo(ctx.get_help(), nl=False)
+    raise typer.Exit(EXIT_USAGE)
+
+
+def _ask_merged_project(ctx: typer.Context, project: Path | None) -> Path | None:
+    """Prefer local `--project`, else the value from `ask -P … <subcommand>`."""
+    if project is not None:
+        return project
+    parent = ctx.parent
+    if parent is None:
+        return None
+    raw = parent.params.get("project")
+    if raw is None:
+        return None
+    return raw if isinstance(raw, Path) else Path(str(raw))
+
+
+def _ask_merged_flag(ctx: typer.Context, name: str, local: bool) -> bool:
+    if local:
+        return True
+    parent = ctx.parent
+    return bool(parent.params.get(name)) if parent is not None else False
+
+
+@ask_app.command("__question__", hidden=True)
+def ask_question(
+    ctx: typer.Context,
+    words: Annotated[
+        list[str] | None,
+        typer.Argument(help="Question words.", show_default=False),
+    ] = None,
     no_ai: _NoAi = False,
     no_check: _NoCheck = False,
     yes: _Yes = False,
@@ -541,20 +682,64 @@ def ask(
     """Ask a question with the project and last run as context."""
     from shepherd.ask_cmd import run_ask
 
+    parent = ctx.parent
     sctx = _apply_command_flags(
         ctx,
-        no_ai=no_ai,
-        no_check=no_check,
-        yes=yes,
-        json_out=json_out,
-        dry_run=dry_run,
-        show_backend=show_backend,
-        verbose=verbose,
-        project=project,
-        run_id=run_id,
+        no_ai=_ask_merged_flag(ctx, "no_ai", no_ai),
+        no_check=_ask_merged_flag(ctx, "no_check", no_check),
+        yes=_ask_merged_flag(ctx, "yes", yes),
+        json_out=_ask_merged_flag(ctx, "json_out", json_out),
+        dry_run=_ask_merged_flag(ctx, "dry_run", dry_run),
+        show_backend=_ask_merged_flag(ctx, "show_backend", show_backend),
+        verbose=_ask_merged_flag(ctx, "verbose", verbose),
+        project=_ask_merged_project(ctx, project),
+        run_id=run_id or (parent.params.get("run_id") if parent else None),
     )
+    question = " ".join(words or []).strip()
+    if not question:
+        raise typer.BadParameter(
+            'Missing question. Example: shepherd ask "why are LEDs active-low?"',
+            param_hint="QUESTION",
+        )
     try:
         code = run_ask(sctx, Output(sctx), question)
+    except ShepherdError as e:
+        _print_error(e)
+        raise typer.Exit(e.exit_code) from e
+    raise typer.Exit(code)
+
+
+@ask_app.command("wipe")
+def ask_wipe(
+    ctx: typer.Context,
+    no_ai: _NoAi = False,
+    no_check: _NoCheck = False,
+    yes: _Yes = False,
+    json_out: _Json = False,
+    dry_run: _DryRun = False,
+    show_backend: _ShowBackend = False,
+    verbose: _Verbose = False,
+    project: _Project = None,
+    run_id: _RunId = None,
+) -> None:
+    """Clear Ask / run history (`.shepherd` db + runs). Keeps build artifacts."""
+    from shepherd.ask_cmd import run_ask_wipe
+
+    parent = ctx.parent
+    sctx = _apply_command_flags(
+        ctx,
+        no_ai=_ask_merged_flag(ctx, "no_ai", no_ai),
+        no_check=_ask_merged_flag(ctx, "no_check", no_check),
+        yes=_ask_merged_flag(ctx, "yes", yes),
+        json_out=_ask_merged_flag(ctx, "json_out", json_out),
+        dry_run=_ask_merged_flag(ctx, "dry_run", dry_run),
+        show_backend=_ask_merged_flag(ctx, "show_backend", show_backend),
+        verbose=_ask_merged_flag(ctx, "verbose", verbose),
+        project=_ask_merged_project(ctx, project),
+        run_id=run_id or (parent.params.get("run_id") if parent else None),
+    )
+    try:
+        code = run_ask_wipe(sctx, Output(sctx))
     except ShepherdError as e:
         _print_error(e)
         raise typer.Exit(e.exit_code) from e

@@ -177,18 +177,117 @@ def _free_port(port: int) -> None:
         time.sleep(0.1)
 
 
-def _require_web(project: Path | None) -> Path:
+# Next.js 15 needs Node ^18.18 || ≥20. Prefer 20+.
+_MIN_NODE = (18, 18)
+
+
+def _node_version(node_bin: Path) -> tuple[int, int] | None:
+    try:
+        out = subprocess.run(
+            [str(node_bin), "-p", "process.versions.node"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    parts = out.stdout.strip().split(".")
+    try:
+        return int(parts[0]), int(parts[1] if len(parts) > 1 else 0)
+    except ValueError:
+        return None
+
+
+def _candidate_node_bins() -> list[Path]:
+    """PATH node, SHEPHERD_NODE, then nvm installs (newest first)."""
     import shutil
 
+    cands: list[Path] = []
+    env_node = os.environ.get("SHEPHERD_NODE")
+    if env_node:
+        cands.append(Path(env_node).expanduser())
+    which = shutil.which("node")
+    if which:
+        cands.append(Path(which))
+    nvm_root = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm")).expanduser()
+
+    def _nvm_ver_key(p: Path) -> tuple[int, ...]:
+        name = p.parent.parent.name.lstrip("v")
+        try:
+            return tuple(int(x) for x in name.split(".")[:3])
+        except ValueError:
+            return (0,)
+
+    versions = sorted(
+        (nvm_root / "versions" / "node").glob("v*/bin/node"),
+        key=_nvm_ver_key,
+        reverse=True,
+    )
+    cands.extend(versions)
+    # Dedupe while preserving order.
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in cands:
+        try:
+            key = p.resolve()
+        except OSError:
+            continue
+        if key in seen or not p.is_file():
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def _resolve_node_npm() -> tuple[Path, Path, tuple[int, int]]:
+    """Return (node, npm, version) for a Node that can run Next.js 15."""
+    best_old: tuple[tuple[int, int], Path] | None = None
+    for node in _candidate_node_bins():
+        ver = _node_version(node)
+        if ver is None:
+            continue
+        npm = node.parent / "npm"
+        if not npm.is_file():
+            continue
+        if ver >= _MIN_NODE:
+            return node, npm, ver
+        if best_old is None or ver > best_old[0]:
+            best_old = (ver, node)
+    found = (
+        f"found Node {best_old[0][0]}.{best_old[0][1]} at {best_old[1]}"
+        if best_old
+        else "no node binary found"
+    )
+    raise UiError(
+        f"Next.js UI needs Node ≥ {_MIN_NODE[0]}.{_MIN_NODE[1]} ({found})",
+        hint=(
+            "install Node 20 (`nvm install 20 && nvm use 20`) "
+            "or set SHEPHERD_NODE to that node binary"
+        ),
+    )
+
+
+def _npm_env(node_bin: Path) -> dict[str, str]:
+    """PATH with Node's bin first so `npm`/`node` stay on the same version."""
+    env = os.environ.copy()
+    bin_dir = str(node_bin.parent)
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    env["NPM_CONFIG_ENGINE_STRICT"] = "true"
+    return env
+
+
+def _require_web(project: Path | None) -> tuple[Path, Path, Path, tuple[int, int]]:
     web = find_web_dir(project)
     if web is None:
         raise UiError(
             "could not find web/package.json — run from the FPGA-shepherd checkout "
             "(or set SHEPHERD_ROOT), e.g. `cd …/FPGA-shepherd && uv run shepherd ui`",
         )
-    if shutil.which("npm") is None:
-        raise UiError("`npm` not found — install Node.js ≥ 20, then re-run")
-    return web
+    node, npm, ver = _resolve_node_npm()
+    return web, node, npm, ver
 
 
 def _project_url(project: Path, port: int, web: Path) -> str:
@@ -201,10 +300,26 @@ def _project_url(project: Path, port: int, web: Path) -> str:
     return f"http://127.0.0.1:{port}/?project={target}"
 
 
-def _ensure_built(web: Path, out: Output, *, force: bool = False) -> None:
+def _ensure_surfer(web: Path, out: Output, *, npm: Path, env: dict[str, str]) -> None:
+    """Fetch Surfer WASM into `web/public/surfer/` when missing (gitignored)."""
+    if (web / "public" / "surfer" / "surfer_bg.wasm").is_file():
+        return
+    out.detail("fetching Surfer WASM (`npm run surfer`)")
+    got = subprocess.run([str(npm), "run", "surfer"], cwd=web, check=False, env=env)
+    if got.returncode != 0:
+        out.detail(
+            "warn: Surfer download failed — waveform tab can still use hosted Surfer",
+            "yellow",
+        )
+
+
+def _ensure_built(
+    web: Path, out: Output, *, npm: Path, env: dict[str, str], force: bool = False
+) -> None:
     need_install = not (web / "node_modules").is_dir()
     need_build = force or not _build_ok(web)
     if not need_install and not need_build:
+        _ensure_surfer(web, out, npm=npm, env=env)
         return
     out.headline(
         "UI setup — building the web app (about a minute on first run)…"
@@ -213,11 +328,12 @@ def _ensure_built(web: Path, out: Output, *, force: bool = False) -> None:
     )
     if need_install:
         out.detail("running `npm install` in web/")
-        install = subprocess.run(["npm", "install"], cwd=web, check=False)
+        install = subprocess.run([str(npm), "install"], cwd=web, check=False, env=env)
         if install.returncode != 0:
             raise UiError("`npm install` failed", fail=True)
+    _ensure_surfer(web, out, npm=npm, env=env)
     out.detail("running `npm run build` in web/")
-    built = subprocess.run(["npm", "run", "build"], cwd=web, check=False)
+    built = subprocess.run([str(npm), "run", "build"], cwd=web, check=False, env=env)
     if built.returncode != 0:
         raise UiError("`npm run build` failed", fail=True)
     if not _build_ok(web):
@@ -238,8 +354,10 @@ def start_ui(
     ctx: Context, out: Output, *, port: int = DEFAULT_PORT, open_browser: bool = True
 ) -> int:
     """Install/build if needed, then `npm start` in the background."""
-    web = _require_web(ctx.project)
+    web, node, npm, ver = _require_web(ctx.project)
+    env = _npm_env(node)
     url = _project_url(ctx.project, port, web)
+    out.detail(f"using Node {ver[0]}.{ver[1]} ({node})")
 
     if _ui_healthy(port):
         out.headline(f"UI: {url}")
@@ -254,9 +372,9 @@ def start_ui(
         out.detail(f"port {port} is up but UI APIs are unhealthy — restarting")
         _free_port(port)
         _clear_state(web)
-        _ensure_built(web, out, force=True)
+        _ensure_built(web, out, npm=npm, env=env, force=True)
     else:
-        _ensure_built(web, out, force=False)
+        _ensure_built(web, out, npm=npm, env=env, force=False)
 
     out.headline(f"UI: {url}")
 
@@ -264,11 +382,12 @@ def start_ui(
     log_f = log_path.open("w")
     try:
         proc = subprocess.Popen(
-            ["npm", "run", "start", "--", "-p", str(port)],
+            [str(npm), "run", "start", "--", "-p", str(port)],
             cwd=web,
             stdout=log_f,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=env,
         )
     finally:
         log_f.close()
@@ -284,7 +403,14 @@ def start_ui(
         with contextlib.suppress(OSError):
             tail = log_path.read_text()[-800:].strip()
             if tail:
-                hint = f"see {log_path.name}: {tail.splitlines()[-1]}"
+                last = tail.splitlines()[-1]
+                if "Unexpected token" in tail or "SyntaxError" in tail:
+                    hint = (
+                        "Node looks too old for Next.js — "
+                        f"`nvm use 20` or set SHEPHERD_NODE (log: {last})"
+                    )
+                else:
+                    hint = f"see {log_path.name}: {last}"
         raise UiError(
             f"UI did not become healthy on port {port} within 20s",
             hint=hint,

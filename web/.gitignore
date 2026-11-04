@@ -17,6 +17,11 @@
 /.next/
 /out/
 
+# Surfer WASM (fetched by `npm run surfer` / prebuild)
+/public/surfer/
+.surfer-pages.zip
+.surfer-extract/
+
 # production
 /build
 

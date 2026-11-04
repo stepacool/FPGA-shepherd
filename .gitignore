@@ -16,3 +16,4 @@ web/.next/
 web/out/
 web/.turbo/
 web/.shepherd-ui.json
+web/.shepherd-ui.log

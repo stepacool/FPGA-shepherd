@@ -46,50 +46,111 @@ def _print_verdict(out: Output, findings: list[Finding], log_hint: str | None) -
         out.detail(f"log:   {log_hint}   (or re-run with -v)")
 
 
+def _step_logs(root, run_id: str) -> dict[str, str]:
+    run_dir = RunDir(root, run_id)
+    logs: dict[str, str] = {}
+    for step in ("adapter", "build", "upload"):
+        path = run_dir.log_path(step)
+        if path.is_file():
+            logs[step] = path.read_text(errors="replace")
+    return logs
+
+
+def _pick_explain_row(store: EventStore):
+    """Prefer a failed build/upload with logs; else any run that has step logs."""
+    candidates = store.conn.execute(
+        "SELECT * FROM runs WHERE command IN ('build', 'upload') "
+        "ORDER BY CASE verdict WHEN 'fail' THEN 0 ELSE 1 END, "
+        "started_at DESC, rowid DESC"
+    ).fetchall()
+    for row in candidates:
+        if _step_logs(store.project_root, row["id"]):
+            return row
+    # Last resort: scan recent runs (skip ask/wipe/explain noise when possible).
+    for row in store.conn.execute(
+        "SELECT * FROM runs ORDER BY started_at DESC, rowid DESC LIMIT 20"
+    ):
+        if row["command"] in ("ask", "wipe", "explain", "doctor", "verify", "reset"):
+            continue
+        if _step_logs(store.project_root, row["id"]):
+            return row
+    return store.latest_run()
+
+
 def run_explain(ctx: Context, out: Output, log: Path | None) -> int:
     """Diagnose a log file or the latest failed run; return process exit code."""
     agent = VerifyAgent()
-    if log is not None:
-        path = log.expanduser().resolve()
-        if not path.is_file():
-            raise ExplainError(f"log file not found: {path}")
-        text = path.read_text(errors="replace")
-        root, cfg = _load_cfg(ctx)
-        verdict = agent.explain_text(text, cfg=cfg)
-        _print_verdict(out, verdict.findings, display_path(path))
-        if root is not None and not ctx.dry_run:
-            _record_explain_run(ctx, root, cfg.board if cfg else None, verdict)
-        return 0 if verdict.level == "pass" else 1
+    root = None
+    board = None
+    try:
+        if log is not None:
+            path = log.expanduser().resolve()
+            if not path.is_file():
+                raise ExplainError(f"log file not found: {path}")
+            text = path.read_text(errors="replace")
+            root, cfg = _load_cfg(ctx)
+            board = cfg.board if cfg else None
+            verdict = agent.explain_text(text, cfg=cfg)
+            _print_verdict(out, verdict.findings, display_path(path))
+            if root is not None and not ctx.dry_run:
+                _record_explain_run(ctx, root, board, verdict)
+            return 0 if verdict.level == "pass" else 1
 
-    root, cfg = _load_cfg(ctx)
-    if root is None:
-        raise ExplainError(
-            "no shepherd.toml found and no log path given",
-            hint="pass a log file: `shepherd explain path/to.log`",
-        )
+        root, cfg = _load_cfg(ctx)
+        board = cfg.board if cfg else None
+        if root is None:
+            raise ExplainError(
+                "no shepherd.toml found and no log path given",
+                hint="pass a log file: `shepherd explain path/to.log`",
+            )
+        store = EventStore.open(root)
+        try:
+            row = _pick_explain_row(store)
+            if row is None:
+                raise ExplainError("no runs recorded yet", hint="run `shepherd build` first")
+            logs = _step_logs(root, row["id"])
+            if not logs:
+                raise ExplainError(
+                    f"no step logs for run {row['id']}",
+                    hint="run `shepherd build` (or upload) once, then explain again",
+                )
+            verdict = agent.run(cfg=cfg, logs=logs, allow_ai=False)
+            hint = display_path(
+                RunDir(root, row["id"]).log_path("build" if "build" in logs else next(iter(logs)))
+            )
+            _print_verdict(out, verdict.findings, hint)
+            _record_explain_run(ctx, root, board, verdict, store=store)
+            return 0 if verdict.level == "pass" else 1
+        finally:
+            store.close()
+    except ShepherdError as e:
+        # Always finish the UI-allocated run_id so the control room leaves "Explaining…".
+        if root is not None and ctx.run_id and not ctx.dry_run:
+            _record_explain_error(ctx, root, board, e.message)
+        raise
+
+
+def _record_explain_error(ctx: Context, root, board: str | None, message: str) -> None:
+    from shepherd.events.db import new_run_id
+
     store = EventStore.open(root)
     try:
-        row = store.latest_run()
-        if row is None:
-            raise ExplainError("no runs recorded yet", hint="run `shepherd build` first")
-        # Prefer the latest failed run when available.
-        failed = store.conn.execute(
-            "SELECT * FROM runs WHERE verdict = 'fail' ORDER BY started_at DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-        row = failed or row
-        run_dir = RunDir(root, row["id"])
-        logs: dict[str, str] = {}
-        for step in ("adapter", "build", "upload"):
-            path = run_dir.log_path(step)
-            if path.is_file():
-                logs[step] = path.read_text(errors="replace")
-        if not logs:
-            raise ExplainError(f"no step logs for run {row['id']}")
-        verdict = agent.run(cfg=cfg, logs=logs, allow_ai=False)
-        hint = display_path(run_dir.log_path("build" if "build" in logs else next(iter(logs))))
-        _print_verdict(out, verdict.findings, hint)
-        _record_explain_run(ctx, root, cfg.board if cfg else None, verdict, store=store)
-        return 0 if verdict.level == "pass" else 1
+        run = store.start_run(
+            "explain",
+            board=board,
+            run_id=ctx.run_id or new_run_id(),
+        )
+        run.event("step_start", step="explain")
+        run.event("log", step="explain", level="error", message=message)
+        run.event(
+            "verdict",
+            step="explain",
+            level="error",
+            message="fail",
+            payload={"error": message},
+        )
+        run.event("step_end", step="explain", level="error", payload={"ok": False})
+        run.finish("fail")
     finally:
         store.close()
 
@@ -141,6 +202,111 @@ def _record_explain_run(ctx, root, board, verdict, store: EventStore | None = No
             payload={"ok": verdict.level != "fail"},
         )
         run.finish("fail" if verdict.level == "fail" else "pass")
+    finally:
+        if own:
+            store.close()
+
+
+def run_verify(ctx: Context, out: Output) -> int:
+    """Run VerifyAgent on the latest run's logs; record a `verify` step for the UI."""
+    root, cfg = _load_cfg(ctx)
+    if root is None or cfg is None:
+        raise ConfigError(
+            f"no {config_mod.CONFIG_NAME} found in {ctx.project} or its parents",
+            hint="run `shepherd init` or pass `--project`",
+        )
+    store = EventStore.open(root)
+    try:
+        # Prefer the latest successful upload; fall back to latest run with logs.
+        row = store.conn.execute(
+            "SELECT * FROM runs WHERE command = 'upload' AND verdict = 'pass' "
+            "ORDER BY started_at DESC, rowid DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            row = store.latest_run()
+        if row is None:
+            raise ExplainError("no runs recorded yet", hint="run `shepherd upload` first")
+        run_dir = RunDir(root, row["id"])
+        logs: dict[str, str] = {}
+        for step in ("adapter", "build", "upload"):
+            path = run_dir.log_path(step)
+            if path.is_file():
+                logs[step] = path.read_text(errors="replace")
+        if not logs:
+            raise ExplainError(
+                f"no step logs for run {row['id']}",
+                hint="run `shepherd upload` first",
+            )
+        # Match the build/upload pipeline: only ask the LLM when the run already failed.
+        # Calling AI on a clean pass invents false "failures" (e.g. LVCMOS18 on LEDs).
+        ok_so_far = row["verdict"] == "pass"
+        allow_ai = (not ctx.no_ai) and cfg.checks_ai and not ok_so_far
+        from shepherd.llm.diagnose import ai_findings
+
+        agent = VerifyAgent(ai_hook=ai_findings)
+        verdict = agent.run(
+            cfg=cfg,
+            logs=logs,
+            allow_ai=allow_ai,
+            step="verify",
+        )
+        hint = display_path(run_dir.log_path("upload" if "upload" in logs else next(iter(logs))))
+        _print_verdict(out, verdict.findings, hint)
+        if not ctx.dry_run:
+            _record_verify_run(ctx, root, cfg.board, verdict, store=store)
+        return 0 if verdict.level == "pass" else 1
+    finally:
+        store.close()
+
+
+def _record_verify_run(ctx, root, board, verdict, store: EventStore | None = None) -> None:
+    """Write verify step events under ctx.run_id so the control room can light the pill."""
+    from shepherd.events.db import new_run_id
+
+    if ctx.dry_run:
+        return
+    own = store is None
+    if store is None:
+        store = EventStore.open(root)
+    try:
+        run = store.start_run(
+            "verify",
+            board=board,
+            run_id=ctx.run_id or new_run_id(),
+        )
+        run.event("step_start", step="verify")
+        payload = {
+            "findings": [
+                {
+                    "id": f.id,
+                    "level": f.level,
+                    "message": f.message,
+                    "cause": f.cause,
+                    "fix": f.fix,
+                }
+                for f in verdict.findings
+            ]
+        }
+        ok = verdict.level != "fail"
+        run.event(
+            "verdict",
+            step="verify",
+            level="error" if not ok else "info",
+            message=verdict.level,
+            payload=payload,
+        )
+        for f in verdict.findings:
+            if f.cause:
+                run.event("log", step="verify", level=f.level, message=f"cause: {f.cause}")
+            if f.fix:
+                run.event("log", step="verify", level="info", message=f"fix:   {f.fix}")
+        run.event(
+            "step_end",
+            step="verify",
+            level="error" if not ok else "info",
+            payload={"ok": ok},
+        )
+        run.finish("fail" if not ok else "pass")
     finally:
         if own:
             store.close()

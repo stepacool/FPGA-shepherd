@@ -125,3 +125,22 @@ export function latestSuccessfulBuild(projectPath: string): RunRow | null {
     db.close();
   }
 }
+
+/** Latest finished `upload` with verdict pass (for gating verify). */
+export function latestSuccessfulUpload(projectPath: string): RunRow | null {
+  resolveProject(projectPath);
+  const db = open(projectPath);
+  if (!db) return null;
+  try {
+    return (
+      (db
+        .prepare(
+          "SELECT * FROM runs WHERE command = 'upload' AND verdict = 'pass' "
+            + "ORDER BY started_at DESC, rowid DESC LIMIT 1",
+        )
+        .get() as RunRow | undefined) ?? null
+    );
+  } finally {
+    db.close();
+  }
+}

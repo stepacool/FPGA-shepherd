@@ -5,13 +5,15 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { getRun, latestSuccessfulBuild } from "./db";
+import { getRun, latestSuccessfulBuild, latestSuccessfulUpload } from "./db";
 import { hasBitstream, lockPath, repoRoot, resolveProject } from "./paths";
 
 /** Commands the demo UI may start (Shepherd owns the toolchain). */
 export const ALLOWED = new Set([
   "build",
   "upload",
+  "verify",
+  "reset",
   "doctor",
   "explain",
   "ask",
@@ -23,6 +25,9 @@ export const ALLOWED = new Set([
 
 /** Require a successful build (or an on-disk bitstream) before these. */
 export const REQUIRES_BUILD = new Set(["upload", "sim", "test", "report"]);
+
+/** Require a successful upload before these. */
+export const REQUIRES_UPLOAD = new Set(["verify"]);
 
 export type SpawnRequest = {
   project: string;
@@ -93,6 +98,15 @@ export function spawnShepherd(req: SpawnRequest): SpawnResult {
       return {
         ok: false,
         error: `run Build successfully before ${command}`,
+      };
+    }
+  }
+
+  if (REQUIRES_UPLOAD.has(command)) {
+    if (latestSuccessfulUpload(project) == null) {
+      return {
+        ok: false,
+        error: `run Upload successfully before ${command}`,
       };
     }
   }

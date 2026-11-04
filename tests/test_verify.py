@@ -74,3 +74,28 @@ def test_pipeline_fail_prints_signature_cause(project: Path, monkeypatch):
     # One FAIL banner for pnr — not a second "pnr FAIL checkpoint".
     assert result.output.count("FAIL") >= 1
     assert "FAIL checkpoint" not in result.output
+
+
+def test_verify_pass_on_clean_upload_does_not_call_ai(project: Path, monkeypatch):
+    """Successful upload + no signatures → pass; AI must not invent a failure."""
+    from shepherd.events.db import EventStore
+    from shepherd.events.logs import RunDir
+    from shepherd.llm import diagnose
+
+    store = EventStore.open(project)
+    run = store.start_run("upload", board="tangnano9k", run_id="upload-ok")
+    run_dir = RunDir(project, run.id)
+    run_dir.path.mkdir(parents=True, exist_ok=True)
+    run_dir.log_path("upload").write_text(
+        "JTAG chainpos: 0 Device IDCODE: 0x...\nSRAM load: 100% done\nCRC check: Success\nDONE\n"
+    )
+    run.finish("pass")
+    store.close()
+
+    def boom(**_kwargs):
+        raise AssertionError("AI must not run on a clean successful upload")
+
+    monkeypatch.setattr(diagnose, "ai_findings", boom)
+    result = runner.invoke(cli.app, ["--project", str(project), "verify"])
+    assert result.exit_code == 0, result.output
+    assert "pass" in result.output.lower() or "no known error" in result.output.lower()

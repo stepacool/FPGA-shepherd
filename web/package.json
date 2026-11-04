@@ -2,11 +2,16 @@
   "name": "web",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "scripts": {
-    "dev": "next dev -p 3010",
+    "dev": "node scripts/check-node.mjs && next dev -p 3010",
+    "surfer": "node scripts/check-node.mjs && node scripts/fetch-surfer.mjs",
+    "prebuild": "node scripts/check-node.mjs && node scripts/fetch-surfer.mjs",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "node scripts/check-node.mjs && next start",
+    "lint": "node scripts/check-node.mjs && next lint"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

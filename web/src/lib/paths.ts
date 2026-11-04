@@ -40,3 +40,19 @@ export function hasBitstream(projectPath: string): boolean {
   );
   return fs.existsSync(fsPath);
 }
+
+/** Max mtime of shepherd.toml + listed sources (for invalidating session Built). */
+export function sourcesStamp(projectPath: string, sources: string[]): number {
+  const root = resolveProject(projectPath);
+  let max = 0;
+  for (const rel of [...sources, "shepherd.toml"]) {
+    const file = path.isAbsolute(rel) ? rel : path.join(root, rel);
+    try {
+      const m = fs.statSync(file).mtimeMs;
+      if (m > max) max = m;
+    } catch {
+      /* missing source — ignore */
+    }
+  }
+  return max;
+}

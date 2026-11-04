@@ -92,7 +92,7 @@ For AI-assisted `explain` / `ask`, set `META_API_KEY`.
 
 ## Status
 
-Early development. Working now: `init`, `doctor`, `build` / `upload`, `lint` / `sim` / `test` / `report`, `explain` / `ask`, Amaranth adapter, run history in `.shepherd/shepherd.db`, and a Next.js control room in `web/` (`shepherd ui` / `shepherd ui stop` / `restart`). Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18), [UI epic](https://github.com/FrankP89/FPGA-shepherd/issues/27). Spawn contract: [`docs/ui-spawn.md`](docs/ui-spawn.md).
+Early development. Working now: `init`, `doctor`, `build` / `upload`, `lint` / `sim` / `test` / `report`, `explain` / `ask`, Amaranth adapter, run history in `.shepherd/shepherd.db`, and a Next.js control room in `web/` (`shepherd ui` / `stop` / `restart`, Surfer waveforms after `sim`). Progress: [CLI epic](https://github.com/FrankP89/FPGA-shepherd/issues/18), [UI epic](https://github.com/FrankP89/FPGA-shepherd/issues/27). Spawn contract: [`docs/ui-spawn.md`](docs/ui-spawn.md).
 
 ## Develop
 
