@@ -85,8 +85,12 @@ export function ControlRoom() {
   const [wavePath, setWavePath] = useState<string | null>(null);
   /** Bump to remount Surfer when the user clicks View waveform again. */
   const [waveKey, setWaveKey] = useState(0);
+  /** max-height for Ask = viewport − height of everything above it. */
+  const [askMaxHeight, setAskMaxHeight] = useState<number | undefined>(undefined);
   const logEnd = useRef<HTMLDivElement>(null);
   const askEnd = useRef<HTMLDivElement>(null);
+  const askAsideRef = useRef<HTMLElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const waveSection = useRef<HTMLDivElement>(null);
   const afterIdRef = useRef(0);
   /** Only runs started from this UI session may flip Built / Uploaded. */
@@ -241,28 +245,36 @@ export function ControlRoom() {
     }
   }, [run?.finished_at]);
 
-  // Unstick if Shepherd exited without ever writing this runId (e.g. early CLI error).
+  // Unstick only if Shepherd never recorded this runId AND the project lock is free
+  // (uv cold-start can take >4s — do not treat "no row yet" as failure while still running).
   useEffect(() => {
     if (!busy || !project || !runId || run?.finished_at) return;
     let cancelled = false;
     const started = Date.now();
     const tick = async () => {
-      const res = await fetch(
-        `/api/events?project=${encodeURIComponent(project)}&runId=${encodeURIComponent(runId)}&after=0`,
-      );
-      const data = await res.json();
-      if (cancelled || !res.ok) return;
-      if (data.run?.finished_at) {
+      const [evRes, projRes] = await Promise.all([
+        fetch(
+          `/api/events?project=${encodeURIComponent(project)}&runId=${encodeURIComponent(runId)}&after=0`,
+        ),
+        fetch(`/api/project?project=${encodeURIComponent(project)}`),
+      ]);
+      const data = await evRes.json();
+      const proj = await projRes.json();
+      if (cancelled || !evRes.ok) return;
+      if (data.run) {
         setRun(data.run);
-        setBusy(false);
-        setBusyCmd(null);
+        if (data.run.finished_at) {
+          setBusy(false);
+          setBusyCmd(null);
+        }
         return;
       }
-      if (!data.run && Date.now() - started > 4000) {
+      const locked = Boolean(proj.lock?.locked);
+      if (!locked && Date.now() - started > 20000) {
         setBusy(false);
         setBusyCmd(null);
         setError(
-          "Shepherd exited without finishing this run. Try again — Cancel should also free the UI.",
+          "Shepherd exited before recording this run. Try again, or use Cancel to free the UI.",
         );
       }
     };
@@ -525,11 +537,41 @@ export function ControlRoom() {
   }, [events]);
 
   useEffect(() => {
-    askEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    // Scroll only the Ask chat pane — never grow / scroll the page for new turns.
+    const pane = askEnd.current?.parentElement;
+    if (pane) pane.scrollTop = pane.scrollHeight;
   }, [askThread, busyCmd]);
 
+  const measureAskMaxHeight = useCallback(() => {
+    const ask = askAsideRef.current;
+    if (!ask) return;
+    // Space left in the viewport below the top edge of Ask (everything above is already
+    // accounted for by getBoundingClientRect().top). Leave the page's bottom padding.
+    const top = ask.getBoundingClientRect().top;
+    const bottomGap = 24; // matches py-6 on the shell
+    setAskMaxHeight(Math.max(192, Math.floor(window.innerHeight - top - bottomGap)));
+  }, []);
+
+  useEffect(() => {
+    measureAskMaxHeight();
+    const onWin = () => measureAskMaxHeight();
+    window.addEventListener("resize", onWin);
+    window.addEventListener("scroll", onWin, { passive: true });
+    const ro = new ResizeObserver(onWin);
+    if (shellRef.current) ro.observe(shellRef.current);
+    if (askAsideRef.current) ro.observe(askAsideRef.current);
+    return () => {
+      window.removeEventListener("resize", onWin);
+      window.removeEventListener("scroll", onWin);
+      ro.disconnect();
+    };
+  }, [measureAskMaxHeight, info, error, tab, askThread.length, built, uploaded]);
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-4 py-6">
+    <div
+      ref={shellRef}
+      className="mx-auto flex min-h-screen max-w-7xl flex-col gap-4 px-4 py-6"
+    >
       <header className="flex flex-wrap items-end justify-between gap-3 border-b border-stone-300 pb-4">
         <div>
           <p className="font-display text-2xl tracking-tight text-stone-900">
@@ -916,8 +958,12 @@ export function ControlRoom() {
           )}
         </div>
 
-        <aside className="flex min-h-[22rem] flex-col rounded border border-stone-300 bg-white lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)]">
-          <div className="flex items-start gap-2 border-b border-stone-200 px-3 py-2">
+        <aside
+          ref={askAsideRef}
+          className="flex flex-col overflow-hidden rounded border border-stone-300 bg-white lg:sticky lg:top-4"
+          style={askMaxHeight != null ? { maxHeight: askMaxHeight } : undefined}
+        >
+          <div className="flex shrink-0 items-start gap-2 border-b border-stone-200 px-3 py-2">
             <div className="min-w-0 flex-1">
               <p className="font-medium text-stone-900">Ask</p>
               <p className="text-xs text-stone-500">
@@ -935,8 +981,8 @@ export function ControlRoom() {
               {busyCmd === "wipe" ? "Wiping…" : "Clear"}
             </button>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 text-sm">
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-3 text-sm">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain">
               {askThread.length === 0 && busyCmd !== "ask" && (
                 <p className="text-stone-500">
                   Ask anything about the board, RTL, or the last run. Questions in
@@ -969,7 +1015,7 @@ export function ControlRoom() {
               ))}
               <div ref={askEnd} />
             </div>
-            <div className="flex gap-2 border-t border-stone-100 pt-3">
+            <div className="flex shrink-0 gap-2 border-t border-stone-100 pt-3">
               <input
                 className="min-w-0 flex-1 rounded border border-stone-400 px-2 py-1.5 text-sm"
                 placeholder="e.g. why are the LEDs active-low?"

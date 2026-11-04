@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type DirEntry = {
   name: string;
@@ -13,6 +13,7 @@ type BrowsePayload = {
   parent: string | null;
   home: string;
   repo: string;
+  hasShepherdToml?: boolean;
   entries: DirEntry[];
   error?: string;
 };
@@ -42,12 +43,19 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
       return;
     }
     setData(body);
-    setSelected(body.path);
+    // Prefer the current folder only when it is already a Shepherd project.
+    setSelected(body.hasShepherdToml ? body.path : null);
   }, []);
 
   useEffect(() => {
     void load(initialPath || undefined);
   }, [initialPath, load]);
+
+  const selectedIsShepherd = useMemo(() => {
+    if (!data || !selected) return false;
+    if (selected === data.path) return Boolean(data.hasShepherdToml);
+    return data.entries.find((e) => e.path === selected)?.hasShepherdToml ?? false;
+  }, [data, selected]);
 
   return (
     <div
@@ -62,6 +70,13 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
           <p className="truncate font-mono text-xs text-stone-600" title={data?.path}>
             {data?.path ?? "…"}
           </p>
+          {data && !data.hasShepherdToml && (
+            <p className="mt-1 text-xs text-amber-800">
+              This folder has no <code className="font-mono">shepherd.toml</code> — pick a
+              marked <span className="font-medium">shepherd</span> project below (or OK is
+              disabled).
+            </p>
+          )}
         </header>
 
         <div className="flex flex-wrap gap-2 border-b border-stone-200 px-4 py-2 text-xs">
@@ -108,7 +123,13 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
                       active ? "bg-amber-100 ring-1 ring-amber-700" : ""
                     }`}
                     onClick={() => setSelected(e.path)}
-                    onDoubleClick={() => void load(e.path)}
+                    onDoubleClick={() => {
+                      if (e.hasShepherdToml) {
+                        onOk(e.path);
+                      } else {
+                        void load(e.path);
+                      }
+                    }}
                   >
                     <span className="font-mono">{e.name}/</span>
                     {e.hasShepherdToml && (
@@ -122,7 +143,9 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
             })}
           </ul>
           <p className="mt-2 px-2 text-[11px] text-stone-500">
-            Double-click a folder to open it. Select a folder, then OK.
+            Only folders with a <code className="font-mono">shepherd.toml</code> (green
+            badge) can be opened. Double-click a badge to select it, or a plain folder to
+            enter it.
           </p>
         </div>
 
@@ -137,8 +160,13 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
           <button
             type="button"
             className="rounded bg-stone-900 px-3 py-1.5 text-sm text-stone-50 hover:bg-stone-700 disabled:opacity-40"
-            disabled={!selected}
-            onClick={() => selected && onOk(selected)}
+            disabled={!selected || !selectedIsShepherd}
+            title={
+              selected && !selectedIsShepherd
+                ? "Not a Shepherd project (no shepherd.toml)"
+                : undefined
+            }
+            onClick={() => selected && selectedIsShepherd && onOk(selected)}
           >
             OK
           </button>

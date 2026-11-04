@@ -6,7 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getRun, latestSuccessfulBuild, latestSuccessfulUpload } from "./db";
-import { hasBitstream, lockPath, repoRoot, resolveProject } from "./paths";
+import {
+  hasBitstream,
+  hasShepherdToml,
+  lockPath,
+  repoRoot,
+  resolveProject,
+} from "./paths";
 
 /** Commands the demo UI may start (Shepherd owns the toolchain). */
 export const ALLOWED = new Set([
@@ -87,6 +93,13 @@ export function lockStatus(projectPath: string): {
  */
 export function spawnShepherd(req: SpawnRequest): SpawnResult {
   const project = resolveProject(req.project);
+  if (!hasShepherdToml(project)) {
+    return {
+      ok: false,
+      error:
+        "not a Shepherd project (no shepherd.toml) — open a folder that contains one",
+    };
+  }
   const command = req.command.trim();
   if (!ALLOWED.has(command)) {
     return { ok: false, error: `command not allowed: ${command}` };

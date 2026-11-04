@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { activeRun, latestRun, latestSuccessfulBuild } from "@/lib/db";
-import { hasBitstream, sourcesStamp } from "@/lib/paths";
+import { hasBitstream, hasShepherdToml, sourcesStamp } from "@/lib/paths";
 import { lockStatus } from "@/lib/spawnShepherd";
 import { readProjectToml } from "@/lib/toml";
 
@@ -13,6 +13,15 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "project query required" }, { status: 400 });
   }
   try {
+    if (!hasShepherdToml(project)) {
+      return NextResponse.json(
+        {
+          error:
+            "not a Shepherd project (no shepherd.toml). Open a demo folder like examples/broken/unconstrained_io, not the parent broken/ folder.",
+        },
+        { status: 400 },
+      );
+    }
     const toml = readProjectToml(project);
     const latest = latestRun(project);
     const active = activeRun(project);

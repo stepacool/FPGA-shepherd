@@ -59,6 +59,7 @@ export async function GET(req: Request) {
     parent: parent !== current ? parent : null,
     home,
     repo,
+    hasShepherdToml: fs.existsSync(path.join(current, "shepherd.toml")),
     entries: listDirs(current),
   });
 }

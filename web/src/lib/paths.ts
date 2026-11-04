@@ -28,6 +28,15 @@ export function shepherdTomlPath(projectPath: string): string {
   return path.join(resolveProject(projectPath), "shepherd.toml");
 }
 
+/** True when the folder is a Shepherd project (has shepherd.toml). */
+export function hasShepherdToml(projectPath: string): boolean {
+  try {
+    return fs.existsSync(shepherdTomlPath(projectPath));
+  } catch {
+    return false;
+  }
+}
+
 /** True if a packed bitstream exists from a prior successful build. */
 export function hasBitstream(projectPath: string): boolean {
   const fsPath = path.join(
