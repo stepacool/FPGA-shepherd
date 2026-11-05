@@ -8,6 +8,8 @@ You bring the design. Shepherd helps with setup, build, board bring-up, and figu
 
 **v0 board:** Tang Nano 9K only.
 
+Glossary: [Acronyms](ACRONYMS.md).
+
 ## Journey
 
 <table>

@@ -1,6 +1,6 @@
 # UI ↔ Shepherd spawn contract
 
-How the Next.js control room (`web/`) starts and stops CLI runs. See also [`PLAN_UI.md`](../PLAN_UI.md) and issue #28.
+How the Next.js control room (`web/`) starts and stops CLI runs. See also issue #28.
 
 ## Database
 

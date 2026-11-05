@@ -1,4 +1,4 @@
--- Shared events DB (contract with the web UI, see PLAN_UI.md).
+-- Shared events DB (contract with the web UI, see docs/ui-spawn.md).
 -- Shepherd (Python) owns writes; the UI only reads.
 
 -- one row per shepherd invocation
