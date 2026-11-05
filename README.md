@@ -1,5 +1,9 @@
 # FPGA Shepherd
 
+**▶ YOUTUBE DEMO: https://youtu.be/yWx52wcJTa8**
+
+[![Watch the demo](https://img.youtube.com/vi/yWx52wcJTa8/hqdefault.jpg)](https://youtu.be/yWx52wcJTa8)
+
 [![ci](https://github.com/FrankP89/FPGA-shepherd/actions/workflows/ci.yml/badge.svg)](https://github.com/FrankP89/FPGA-shepherd/actions/workflows/ci.yml)
 
 Shepherd speeds up adoption of complex chips like **FPGAs** (field-programmable gate arrays), so getting real hardware into the loop for **physical AI** is simpler.
