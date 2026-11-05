@@ -275,7 +275,9 @@ def _npm_env(node_bin: Path) -> dict[str, str]:
     env = os.environ.copy()
     bin_dir = str(node_bin.parent)
     env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
-    env["NPM_CONFIG_ENGINE_STRICT"] = "true"
+    # eslint-visitor-keys@5 declares Node >=20.19. That is a support cutoff,
+    # and strict mode makes `npm install` fail on 20.11.
+    env["NPM_CONFIG_ENGINE_STRICT"] = "false"
     return env
 
 
