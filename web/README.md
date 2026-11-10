@@ -22,7 +22,7 @@ cd web
 npm install && npm run build && npm start
 ```
 
-Open [http://localhost:3010](http://localhost:3010) — defaults to `examples/blinky_sv`, or pass `?project=/abs/path`.
+Open [http://localhost:3010](http://localhost:3010) — path starts empty (commands disabled until you Open / New / Browse a project). Pass `?project=/abs/path` or `shepherd ui -P …` to pre-select one.
 Override with `shepherd ui --port <port>` or `npm start -- -p <port>`.
 
 On first `shepherd ui`, missing `node_modules` / `.next` triggers `npm install` and `npm run build` (wait ~1 minute).

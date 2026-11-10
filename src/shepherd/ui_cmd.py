@@ -292,14 +292,13 @@ def _require_web(project: Path | None) -> tuple[Path, Path, Path, tuple[int, int
     return web, node, npm, ver
 
 
-def _project_url(project: Path, port: int, web: Path) -> str:
-    """Prefer a folder with shepherd.toml; else blinky example under the repo."""
+def _project_url(project: Path, port: int, _web: Path) -> str:
+    """Open the control room; only attach ?project= when -P points at a real project."""
+    base = f"http://127.0.0.1:{port}/"
     target = project.resolve()
-    if not (target / "shepherd.toml").is_file():
-        blinky = web.parent / "examples" / "blinky_sv"
-        if (blinky / "shepherd.toml").is_file():
-            target = blinky
-    return f"http://127.0.0.1:{port}/?project={target}"
+    if (target / "shepherd.toml").is_file():
+        return f"{base}?project={target}"
+    return base
 
 
 def _ensure_surfer(web: Path, out: Output, *, npm: Path, env: dict[str, str]) -> None:

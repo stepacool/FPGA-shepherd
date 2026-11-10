@@ -1,0 +1,7 @@
+board = "tangnano9k"
+top = "top"
+sources = ["rtl/top.sv"]
+constraints = "tangnano9k.cst"
+
+[checks]
+ai = true

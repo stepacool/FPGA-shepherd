@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { FolderPicker } from "@/components/FolderPicker";
+import { InitProjectModal } from "@/components/InitProjectModal";
+import { OpenInIdeButton } from "@/components/OpenInIdeButton";
 import { SurferEmbed } from "@/components/SurferEmbed";
 
 type RunRow = {
@@ -51,10 +53,7 @@ function emptySteps(): Map<string, StepStatus> {
 
 function defaultProject(): string {
   if (typeof window === "undefined") return "";
-  const q = new URLSearchParams(window.location.search).get("project");
-  if (q) return q;
-  // Demo default: blinky next to the repo (web/ is cwd for Next).
-  return "";
+  return new URLSearchParams(window.location.search).get("project") ?? "";
 }
 
 export function ControlRoom() {
@@ -74,6 +73,7 @@ export function ControlRoom() {
   /** Session-only Ask continuity (cleared on project change / Ask Clear). */
   const [askThread, setAskThread] = useState<AskTurn[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [initOpen, setInitOpen] = useState(false);
   /** Session gate: Upload unlocks only after a successful Build in this session. */
   const [built, setBuilt] = useState(false);
   /** Session gate: Verify unlocks only after a successful Upload in this session. */
@@ -134,22 +134,10 @@ export function ControlRoom() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (projectInput) {
-        await loadProject(projectInput);
-        return;
-      }
-      const res = await fetch("/api/defaults");
-      const data = await res.json();
-      if (cancelled || !data.blinky) return;
-      setProjectInput(data.blinky);
-      await loadProject(data.blinky);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only default project
+    // Only auto-open when the URL already has ?project=… — never force a demo.
+    if (!projectInput) return;
+    void loadProject(projectInput);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only URL project
   }, []);
 
   useEffect(() => {
@@ -610,11 +598,19 @@ export function ControlRoom() {
         </button>
         <button
           type="button"
+          className="rounded border border-stone-400 bg-white px-3 py-2 text-sm hover:bg-stone-100"
+          onClick={() => setInitOpen(true)}
+        >
+          New…
+        </button>
+        <button
+          type="button"
           className="rounded bg-stone-900 px-3 py-2 text-sm text-stone-50 hover:bg-stone-700"
           onClick={() => void loadProject(projectInput.trim())}
         >
           Open
         </button>
+        <OpenInIdeButton project={project} disabled={busy || !project} />
       </section>
 
       {pickerOpen && (
@@ -624,6 +620,26 @@ export function ControlRoom() {
           onOk={(path) => {
             setPickerOpen(false);
             setProjectInput(path);
+            void loadProject(path);
+          }}
+        />
+      )}
+
+      {initOpen && (
+        <InitProjectModal
+          initialParent={
+            project
+              ? project.replace(/\/[^/]+\/?$/, "") || project
+              : projectInput.replace(/\/[^/]+\/?$/, "") || undefined
+          }
+          showBackend={showBackend}
+          onCancel={() => setInitOpen(false)}
+          onCreated={(path) => {
+            setInitOpen(false);
+            setProjectInput(path);
+            setError(null);
+            setTab("run");
+            // Modal already waited for shepherd.toml; toolchain may still finish in background.
             void loadProject(path);
           }}
         />

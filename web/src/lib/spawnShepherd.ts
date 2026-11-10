@@ -16,6 +16,7 @@ import {
 
 /** Commands the demo UI may start (Shepherd owns the toolchain). */
 export const ALLOWED = new Set([
+  "init",
   "build",
   "upload",
   "verify",
@@ -92,17 +93,28 @@ export function lockStatus(projectPath: string): {
  * New process group (`detached`), no TTY. See docs/ui-spawn.md.
  */
 export function spawnShepherd(req: SpawnRequest): SpawnResult {
-  const project = resolveProject(req.project);
-  if (!hasShepherdToml(project)) {
+  const command = req.command.trim();
+  if (!ALLOWED.has(command)) {
+    return { ok: false, error: `command not allowed: ${command}` };
+  }
+
+  let project: string;
+  try {
+    project = resolveProject(req.project);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  // `init` scaffolds shepherd.toml; every other command needs an existing project.
+  if (command !== "init" && !hasShepherdToml(project)) {
     return {
       ok: false,
       error:
         "not a Shepherd project (no shepherd.toml) — open a folder that contains one",
     };
-  }
-  const command = req.command.trim();
-  if (!ALLOWED.has(command)) {
-    return { ok: false, error: `command not allowed: ${command}` };
   }
 
   if (REQUIRES_BUILD.has(command)) {
