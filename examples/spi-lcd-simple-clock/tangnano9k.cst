@@ -1,0 +1,18 @@
+// Tang Nano 9K SPI LCD connector (ST7789 plug-in panel).
+// No jumper wiring — screen sits on the board's 8-pin SPI LCD header.
+IO_LOC "clk" 52;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "resetn" 4;
+IO_PORT "resetn" IO_TYPE=LVCMOS18 PULL_MODE=UP;
+
+IO_LOC "lcd_resetn" 47;
+IO_PORT "lcd_resetn" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "lcd_cs" 48;
+IO_PORT "lcd_cs" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "lcd_rs" 49;
+IO_PORT "lcd_rs" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "lcd_clk" 76;
+IO_PORT "lcd_clk" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "lcd_data" 77;
+IO_PORT "lcd_data" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
