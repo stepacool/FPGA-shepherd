@@ -1,0 +1,4 @@
+board = "tangnano9k"
+top = "oled_ssd1306"
+sources = ["rtl/oled_ssd1306.sv"]
+constraints = "tangnano9k.cst"

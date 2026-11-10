@@ -111,6 +111,7 @@ uv run shepherd -P examples/blinky_sv build      # needs the toolchain; see `--d
 uv run shepherd -P examples/blinky_sv sim
 uv run shepherd -P examples/uart_amaranth build
 uv run shepherd -P examples/spi_lcd_st7789 build  # Sipeed SPI LCD connector
+uv run shepherd -P examples/oled_ssd1306 build    # jumper SSD1306 OLED
 ```
 
 Refresh the global `shepherd` on PATH from this checkout:

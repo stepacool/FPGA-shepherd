@@ -1,0 +1,16 @@
+// Tang Nano 9K + jumper-wired 0.96" SSD1306 OLED (4-wire SPI).
+// Pin picks match Lushay Labs OLED 101 (consecutive 3.3 V GPIOs).
+// https://learn.lushaylabs.com/tang-nano-9k-graphics/
+IO_LOC "clk" 52;
+IO_PORT "clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "oled_cs" 36;
+IO_PORT "oled_cs" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=8;
+IO_LOC "oled_dc" 39;
+IO_PORT "oled_dc" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=8;
+IO_LOC "oled_reset" 25;
+IO_PORT "oled_reset" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=8;
+IO_LOC "oled_mosi" 26;
+IO_PORT "oled_mosi" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=8;
+IO_LOC "oled_sclk" 27;
+IO_PORT "oled_sclk" IO_TYPE=LVCMOS33 PULL_MODE=DOWN DRIVE=8;
