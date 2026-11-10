@@ -53,10 +53,7 @@ function emptySteps(): Map<string, StepStatus> {
 
 function defaultProject(): string {
   if (typeof window === "undefined") return "";
-  const q = new URLSearchParams(window.location.search).get("project");
-  if (q) return q;
-  // Demo default: blinky next to the repo (web/ is cwd for Next).
-  return "";
+  return new URLSearchParams(window.location.search).get("project") ?? "";
 }
 
 export function ControlRoom() {
@@ -137,22 +134,10 @@ export function ControlRoom() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (projectInput) {
-        await loadProject(projectInput);
-        return;
-      }
-      const res = await fetch("/api/defaults");
-      const data = await res.json();
-      if (cancelled || !data.blinky) return;
-      setProjectInput(data.blinky);
-      await loadProject(data.blinky);
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only default project
+    // Only auto-open when the URL already has ?project=… — never force a demo.
+    if (!projectInput) return;
+    void loadProject(projectInput);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only URL project
   }, []);
 
   useEffect(() => {

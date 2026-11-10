@@ -38,6 +38,16 @@ export function InitProjectModal({
       setError("enter a project name");
       return;
     }
+    if (/\s/.test(trimmed)) {
+      setError("project name cannot contain spaces — use hyphens or underscores");
+      return;
+    }
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(trimmed)) {
+      setError(
+        "use letters, digits, ., _, - only (no spaces; must start with a letter or digit)",
+      );
+      return;
+    }
     if (!parent.trim()) {
       setError("choose a parent folder");
       return;
@@ -107,11 +117,17 @@ export function InitProjectModal({
               <input
                 className="mt-1 w-full rounded border border-stone-400 bg-white px-3 py-2 font-mono text-sm"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => setName(e.target.value.replace(/\s+/g, "-"))}
                 placeholder="my-fpga-project"
                 disabled={busy}
                 autoFocus
+                spellCheck={false}
+                autoComplete="off"
               />
+              <span className="mt-1 block text-xs text-stone-500">
+                No spaces — letters, digits, <code className="font-mono">.</code>{" "}
+                <code className="font-mono">_</code> <code className="font-mono">-</code> only.
+              </span>
             </label>
 
             <label className="block text-sm">

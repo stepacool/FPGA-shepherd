@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       {
         ok: false,
         error:
-          "invalid project name — use letters, digits, ., _, - (max 64, must start with alphanumeric)",
+          "invalid project name — no spaces; use letters, digits, ., _, - (max 64, must start with alphanumeric)",
       },
       { status: 400 },
     );
