@@ -22,30 +22,45 @@ type Props = {
   initialPath?: string;
   onOk: (path: string) => void;
   onCancel: () => void;
+  /** When true (default), OK requires a folder with shepherd.toml. */
+  requireShepherdToml?: boolean;
+  title?: string;
 };
 
-export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
+export function FolderPicker({
+  initialPath,
+  onOk,
+  onCancel,
+  requireShepherdToml = true,
+  title,
+}: Props) {
   const [data, setData] = useState<BrowsePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const load = useCallback(async (dir?: string) => {
-    setLoading(true);
-    setError(null);
-    setSelected(null);
-    const q = dir ? `?path=${encodeURIComponent(dir)}` : "";
-    const res = await fetch(`/api/browse${q}`);
-    const body = (await res.json()) as BrowsePayload;
-    setLoading(false);
-    if (!res.ok) {
-      setError(body.error ?? "could not list folder");
-      return;
-    }
-    setData(body);
-    // Prefer the current folder only when it is already a Shepherd project.
-    setSelected(body.hasShepherdToml ? body.path : null);
-  }, []);
+  const load = useCallback(
+    async (dir?: string) => {
+      setLoading(true);
+      setError(null);
+      setSelected(null);
+      const q = dir ? `?path=${encodeURIComponent(dir)}` : "";
+      const res = await fetch(`/api/browse${q}`);
+      const body = (await res.json()) as BrowsePayload;
+      setLoading(false);
+      if (!res.ok) {
+        setError(body.error ?? "could not list folder");
+        return;
+      }
+      setData(body);
+      if (requireShepherdToml) {
+        setSelected(body.hasShepherdToml ? body.path : null);
+      } else {
+        setSelected(body.path);
+      }
+    },
+    [requireShepherdToml],
+  );
 
   useEffect(() => {
     void load(initialPath || undefined);
@@ -57,24 +72,32 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
     return data.entries.find((e) => e.path === selected)?.hasShepherdToml ?? false;
   }, [data, selected]);
 
+  const canOk = Boolean(selected) && (!requireShepherdToml || selectedIsShepherd);
+  const heading = title ?? (requireShepherdToml ? "Choose project folder" : "Choose parent folder");
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Choose project folder"
+      aria-label={heading}
     >
       <div className="flex max-h-[min(36rem,90vh)] w-full max-w-xl flex-col rounded-lg border border-stone-400 bg-stone-50 shadow-lg">
         <header className="border-b border-stone-300 px-4 py-3">
-          <p className="font-medium text-stone-900">Choose project folder</p>
+          <p className="font-medium text-stone-900">{heading}</p>
           <p className="truncate font-mono text-xs text-stone-600" title={data?.path}>
             {data?.path ?? "…"}
           </p>
-          {data && !data.hasShepherdToml && (
+          {requireShepherdToml && data && !data.hasShepherdToml && (
             <p className="mt-1 text-xs text-amber-800">
               This folder has no <code className="font-mono">shepherd.toml</code> — pick a
               marked <span className="font-medium">shepherd</span> project below (or OK is
               disabled).
+            </p>
+          )}
+          {!requireShepherdToml && (
+            <p className="mt-1 text-xs text-stone-600">
+              Select the parent directory where the new project folder will be created.
             </p>
           )}
         </header>
@@ -104,6 +127,20 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
           >
             Repo
           </button>
+          {!requireShepherdToml && data && (
+            <button
+              type="button"
+              className={`rounded border px-2 py-1 hover:bg-stone-100 ${
+                selected === data.path
+                  ? "border-amber-700 bg-amber-100"
+                  : "border-stone-400 bg-white"
+              }`}
+              disabled={loading}
+              onClick={() => setSelected(data.path)}
+            >
+              Use this folder
+            </button>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
@@ -124,7 +161,7 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
                     }`}
                     onClick={() => setSelected(e.path)}
                     onDoubleClick={() => {
-                      if (e.hasShepherdToml) {
+                      if (requireShepherdToml && e.hasShepherdToml) {
                         onOk(e.path);
                       } else {
                         void load(e.path);
@@ -143,9 +180,19 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
             })}
           </ul>
           <p className="mt-2 px-2 text-[11px] text-stone-500">
-            Only folders with a <code className="font-mono">shepherd.toml</code> (green
-            badge) can be opened. Double-click a badge to select it, or a plain folder to
-            enter it.
+            {requireShepherdToml ? (
+              <>
+                Only folders with a <code className="font-mono">shepherd.toml</code> (green
+                badge) can be opened. Double-click a badge to select it, or a plain folder to
+                enter it.
+              </>
+            ) : (
+              <>
+                Double-click a folder to enter it, or select one and press OK. Use{" "}
+                <span className="font-medium">Use this folder</span> to pick the current
+                path.
+              </>
+            )}
           </p>
         </div>
 
@@ -160,13 +207,13 @@ export function FolderPicker({ initialPath, onOk, onCancel }: Props) {
           <button
             type="button"
             className="rounded bg-stone-900 px-3 py-1.5 text-sm text-stone-50 hover:bg-stone-700 disabled:opacity-40"
-            disabled={!selected || !selectedIsShepherd}
+            disabled={!canOk}
             title={
-              selected && !selectedIsShepherd
+              requireShepherdToml && selected && !selectedIsShepherd
                 ? "Not a Shepherd project (no shepherd.toml)"
                 : undefined
             }
-            onClick={() => selected && selectedIsShepherd && onOk(selected)}
+            onClick={() => selected && canOk && onOk(selected)}
           >
             OK
           </button>

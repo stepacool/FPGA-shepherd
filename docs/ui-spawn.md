@@ -26,7 +26,8 @@ uv run --directory <repo-root> shepherd <command> [args…] --yes -P <abs-projec
 - UI allocates `run-id` first so Cancel can bind before the first DB row.
 - Always `--yes`.
 - Optional `--show-backend` when Advanced is on.
-- Allowed commands: `build`, `upload`, `verify`, `reset`, `doctor`, `explain`, `ask`, `sim`, `lint`, `test`, `report`.
+- Allowed commands: `init`, `build`, `upload`, `verify`, `reset`, `doctor`, `explain`, `ask`, `sim`, `lint`, `test`, `report`.
+- **`init`:** may run on a folder that does not yet have `shepherd.toml` (UI creates the directory first via `POST /api/init`). Always pass `--yes`.
 - **Gate:** `upload` / `sim` / `test` / `report` require a prior successful `build` (or an on-disk `hardware.fs`). `verify` requires a prior successful `upload`. The UI also keeps session `Built` / `Uploaded` flags (off by default; cleared on fail or source change).
 - **`reset`:** resets the FPGA (clears SRAM program on the board). Toolbar **Reset** button.
 - **`ask wipe`:** wipes `.shepherd/shepherd.db` and `.shepherd/runs/` (Ask / explain / verify history). Keeps `.shepherd/build/` and `.shepherd/gen/`. Ask panel **Clear** control spawns `ask` with args `["wipe"]`. After success the UI resets the Ask Q+A.
