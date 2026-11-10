@@ -1,0 +1,4 @@
+board = "tangnano9k"
+top = "spi_lcd_st7789"
+sources = ["rtl/spi_lcd_st7789.sv"]
+constraints = "tangnano9k.cst"

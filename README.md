@@ -110,6 +110,7 @@ uv run pytest
 uv run shepherd -P examples/blinky_sv build      # needs the toolchain; see `--dry-run` otherwise
 uv run shepherd -P examples/blinky_sv sim
 uv run shepherd -P examples/uart_amaranth build
+uv run shepherd -P examples/spi_lcd_st7789 build  # Sipeed SPI LCD connector
 ```
 
 Refresh the global `shepherd` on PATH from this checkout:
